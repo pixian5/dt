@@ -226,7 +226,7 @@ async def perform_login(
             await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=8000)
             # 用 JS 一次性获取所有未学习卡片的索引
             unlearned_indices = await page.evaluate(
-                """(cardSel, stateSel) => {
+                """([cardSel, stateSel]) => {
                     const cards = Array.from(document.querySelectorAll(cardSel));
                     const result = [];
                     cards.forEach((c, idx) => {
@@ -236,8 +236,7 @@ async def perform_login(
                     });
                     return result;
                 }""",
-                VIDEO_CARD_SELECTOR,
-                STATE_SELECTOR,
+                [VIDEO_CARD_SELECTOR, STATE_SELECTOR],
             )
             print(f"[INFO] 当前页未学习卡片索引：{unlearned_indices}")
             processed_count = 0
