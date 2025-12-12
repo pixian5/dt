@@ -133,6 +133,33 @@ async def _get_next_page_target(current_text: str) -> str | None:
         return None
 
 
+def _parse_page_range(page_arg: str | None) -> tuple[int | None, int | None]:
+    if not page_arg:
+        return None, None
+    s = str(page_arg).strip()
+    if not s:
+        return None, None
+    if "-" not in s:
+        try:
+            start = int(s)
+            return (start if start > 0 else None), None
+        except Exception:
+            return None, None
+    parts = [p.strip() for p in s.split("-", 1)]
+    if len(parts) != 2:
+        return None, None
+    try:
+        start = int(parts[0])
+        end = int(parts[1])
+    except Exception:
+        return None, None
+    if start <= 0 or end <= 0:
+        return None, None
+    if end < start:
+        start, end = end, start
+    return start, end
+
+
 async def perform_login(
     username: str,
     password: str,
@@ -140,6 +167,7 @@ async def perform_login(
     keep_open: bool,
     skip_login: bool = False,
     start_page: int | None = None,
+    end_page: int | None = None,
 ) -> None:
     data_dir = Path("data")
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -226,7 +254,12 @@ async def perform_login(
             if start_page is not None and start_page > 0:
                 target_page_text = str(start_page)
                 if page_num and page_num != target_page_text:
-                    print(f"[INFO] 从指定页码开始扫描：跳转到第 {target_page_text} 页")
+                    if end_page is not None and end_page > 0:
+                        print(
+                            f"[INFO] 扫描范围：{start_page}-{end_page}，跳转到第 {target_page_text} 页开始"
+                        )
+                    else:
+                        print(f"[INFO] 从指定页码开始扫描：跳转到第 {target_page_text} 页")
                     await _goto_page_number(page, target_page_text)
                     await page.wait_for_timeout(800)
                     page_num = await _get_active_page_number(page)
@@ -356,6 +389,10 @@ async def perform_login(
                         await page.wait_for_timeout(1000)
             print(f"[INFO] 本页处理完成，共处理 {processed_count} 个未学习卡片")
 
+            if end_page is not None and end_page > 0 and current_page_text == str(end_page):
+                print(f"[INFO] 已到达末页 {end_page}，停止扫描")
+                break
+
             # 尝试下一页
             try:
                 target_text = await _get_next_page_target(current_page_text)
@@ -430,7 +467,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--skip-login", action="store_true", help="已手动登录时使用，跳过登录流程，直接执行后续跳转与点击"
     )
-    parser.add_argument("--start-page", type=int, default=None, help="从指定页码开始扫描（例如 23）")
+    parser.add_argument("--page", type=str, default=None, help='扫描页码："起始页" 或 "起始页-末页"（例如 23 或 23-30）')
+    parser.add_argument("--start-page", type=int, default=None, help="（兼容参数，已废弃）等价于 --page 起始页")
     return parser.parse_args(argv)
 
 
@@ -441,6 +479,7 @@ def login_flow(
     keep_open: bool,
     skip_login: bool,
     start_page: int | None,
+    end_page: int | None,
 ) -> None:
     asyncio.run(
         perform_login(
@@ -450,6 +489,7 @@ def login_flow(
             keep_open=keep_open,
             skip_login=skip_login,
             start_page=start_page,
+            end_page=end_page,
         )
     )
 
@@ -460,7 +500,10 @@ def main(argv: list[str] | None = None) -> None:
     open_only = bool(args.open_only)
     keep_open = (not bool(args.close_after)) or open_only
     skip_login = bool(args.skip_login)
-    start_page = args.start_page
+    page_arg = args.page
+    if not page_arg and args.start_page is not None:
+        page_arg = str(args.start_page)
+    start_page, end_page = _parse_page_range(page_arg)
 
     username = args.username or os.getenv("DT_CRAWLER_USERNAME") or ""
     password = args.password or os.getenv("DT_CRAWLER_PASSWORD") or ""
@@ -477,6 +520,7 @@ def main(argv: list[str] | None = None) -> None:
         keep_open=keep_open,
         skip_login=skip_login,
         start_page=start_page,
+        end_page=end_page,
     )
 
 
