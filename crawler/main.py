@@ -1,5 +1,6 @@
 import argparse
 import csv
+import sys
 import time
 from pathlib import Path
 from typing import Iterable, List, Optional
@@ -7,7 +8,11 @@ from typing import Iterable, List, Optional
 import requests
 from bs4 import BeautifulSoup
 
-from .config import DEFAULT_RETRIES, DEFAULT_TIMEOUT, DEFAULT_USER_AGENT
+try:
+    from .config import DEFAULT_RETRIES, DEFAULT_TIMEOUT, DEFAULT_USER_AGENT
+except ImportError:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from crawler.config import DEFAULT_RETRIES, DEFAULT_TIMEOUT, DEFAULT_USER_AGENT
 
 
 def load_urls_from_file(file_path: Path) -> List[str]:
