@@ -34,7 +34,9 @@ def load_local_secrets() -> None:
             return
 
 
-async def perform_login(username: str, password: str, open_only: bool, keep_open: bool) -> None:
+async def perform_login(
+    username: str, password: str, open_only: bool, keep_open: bool, skip_login: bool = False
+) -> None:
     data_dir = Path("data")
     data_dir.mkdir(parents=True, exist_ok=True)
     async with async_playwright() as p:
@@ -55,35 +57,38 @@ async def perform_login(username: str, password: str, open_only: bool, keep_open
 
         context = browser.contexts[0] if browser.contexts else await browser.new_context()
         page = await context.new_page()
-        print(f"[INFO] 打开登录页：{LOGIN_URL}")
-        await page.goto(LOGIN_URL, wait_until="load")
-        await page.wait_for_selector("#username")
-        await page.wait_for_selector("#password")
-        await page.wait_for_selector("#validateCode")
+        if skip_login:
+            print("[INFO] 跳过登录，直接进行后续操作")
+        else:
+            print(f"[INFO] 打开登录页：{LOGIN_URL}")
+            await page.goto(LOGIN_URL, wait_until="load")
+            await page.wait_for_selector("#username")
+            await page.wait_for_selector("#password")
+            await page.wait_for_selector("#validateCode")
 
-        if not open_only:
-            await page.fill("#username", username)
-            await page.fill("#password", password)
+            if not open_only:
+                await page.fill("#username", username)
+                await page.fill("#password", password)
 
-            captcha = input("请输入验证码（validateCode）：").strip()
-            if not captcha:
-                raise SystemExit("验证码不能为空")
-            await page.fill("#validateCode", captcha)
+                captcha = input("请输入验证码（validateCode）：").strip()
+                if not captcha:
+                    raise SystemExit("验证码不能为空")
+                await page.fill("#validateCode", captcha)
 
-            await page.wait_for_selector("a.js-submit.tianze-loginbtn")
-            await page.click("a.js-submit.tianze-loginbtn")
-            await page.wait_for_timeout(3000)
+                await page.wait_for_selector("a.js-submit.tianze-loginbtn")
+                await page.click("a.js-submit.tianze-loginbtn")
+                await page.wait_for_timeout(3000)
 
-            # 跳转并点击目标元素
-            try:
-                print(f"[INFO] 跳转到目标页：{TARGET_URL}")
-                await page.goto(TARGET_URL, wait_until="load")
-                await page.wait_for_selector(TARGET_TAB_SELECTOR, timeout=10000)
-                await page.click(TARGET_TAB_SELECTOR)
-                img = await page.wait_for_selector(TARGET_IMAGE_SELECTOR, timeout=10000)
-                await img.click()
-            except Exception as exc:  # pylint: disable=broad-except
-                print(f"[WARN] 目标页操作失败：{exc}")
+        # 跳转并点击目标元素
+        try:
+            print(f"[INFO] 跳转到目标页：{TARGET_URL}")
+            await page.goto(TARGET_URL, wait_until="load")
+            await page.wait_for_selector(TARGET_TAB_SELECTOR, timeout=10000)
+            await page.click(TARGET_TAB_SELECTOR)
+            img = await page.wait_for_selector(TARGET_IMAGE_SELECTOR, timeout=10000)
+            await img.click()
+        except Exception as exc:  # pylint: disable=broad-except
+            print(f"[WARN] 目标页操作失败：{exc}")
 
         if keep_open:
             print("[INFO] 浏览器已打开。按 Ctrl+C 退出并关闭浏览器。")
@@ -109,11 +114,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--close-after", action="store_true", help="登录完成后自动关闭浏览器（默认保持打开，按 Ctrl+C 退出）"
     )
+    parser.add_argument(
+        "--skip-login", action="store_true", help="已手动登录时使用，跳过登录流程，直接执行后续跳转与点击"
+    )
     return parser.parse_args(argv)
 
 
-def login_flow(username: str, password: str, open_only: bool, keep_open: bool) -> None:
-    asyncio.run(perform_login(username, password, open_only=open_only, keep_open=keep_open))
+def login_flow(username: str, password: str, open_only: bool, keep_open: bool, skip_login: bool) -> None:
+    asyncio.run(perform_login(username, password, open_only=open_only, keep_open=keep_open, skip_login=skip_login))
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -121,16 +129,17 @@ def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     open_only = bool(args.open_only)
     keep_open = (not bool(args.close_after)) or open_only
+    skip_login = bool(args.skip_login)
 
     username = args.username or os.getenv("DT_CRAWLER_USERNAME") or ""
     password = args.password or os.getenv("DT_CRAWLER_PASSWORD") or ""
-    if not open_only:
+    if not open_only and not skip_login:
         if not username or not password:
             raise SystemExit(
                 "缺少登录信息：请通过参数 --username/--password，或环境变量 DT_CRAWLER_USERNAME/DT_CRAWLER_PASSWORD，"
                 "或在项目根目录创建 secrets.local.env 提供"
             )
-    login_flow(username, password, open_only=open_only, keep_open=keep_open)
+    login_flow(username, password, open_only=open_only, keep_open=keep_open, skip_login=skip_login)
 
 
 if __name__ == "__main__":
