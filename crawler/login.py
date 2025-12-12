@@ -134,7 +134,12 @@ async def _get_next_page_target(current_text: str) -> str | None:
 
 
 async def perform_login(
-    username: str, password: str, open_only: bool, keep_open: bool, skip_login: bool = False
+    username: str,
+    password: str,
+    open_only: bool,
+    keep_open: bool,
+    skip_login: bool = False,
+    start_page: int | None = None,
 ) -> None:
     data_dir = Path("data")
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -217,6 +222,15 @@ async def perform_login(
                 await page.wait_for_timeout(3000)
                 page_num = await _get_active_page_number(page)
                 print(f"[INFO] 重试后页码：{page_num}")
+
+            if start_page is not None and start_page > 0:
+                target_page_text = str(start_page)
+                if page_num and page_num != target_page_text:
+                    print(f"[INFO] 从指定页码开始扫描：跳转到第 {target_page_text} 页")
+                    await _goto_page_number(page, target_page_text)
+                    await page.wait_for_timeout(800)
+                    page_num = await _get_active_page_number(page)
+                    print(f"[INFO] 跳转后当前页码：{page_num}")
         except Exception as exc:  # pylint: disable=broad-except
             print(f"[WARN] 目标页操作失败：{exc}")
 
@@ -416,11 +430,28 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--skip-login", action="store_true", help="已手动登录时使用，跳过登录流程，直接执行后续跳转与点击"
     )
+    parser.add_argument("--start-page", type=int, default=None, help="从指定页码开始扫描（例如 23）")
     return parser.parse_args(argv)
 
 
-def login_flow(username: str, password: str, open_only: bool, keep_open: bool, skip_login: bool) -> None:
-    asyncio.run(perform_login(username, password, open_only=open_only, keep_open=keep_open, skip_login=skip_login))
+def login_flow(
+    username: str,
+    password: str,
+    open_only: bool,
+    keep_open: bool,
+    skip_login: bool,
+    start_page: int | None,
+) -> None:
+    asyncio.run(
+        perform_login(
+            username,
+            password,
+            open_only=open_only,
+            keep_open=keep_open,
+            skip_login=skip_login,
+            start_page=start_page,
+        )
+    )
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -429,6 +460,7 @@ def main(argv: list[str] | None = None) -> None:
     open_only = bool(args.open_only)
     keep_open = (not bool(args.close_after)) or open_only
     skip_login = bool(args.skip_login)
+    start_page = args.start_page
 
     username = args.username or os.getenv("DT_CRAWLER_USERNAME") or ""
     password = args.password or os.getenv("DT_CRAWLER_PASSWORD") or ""
@@ -438,7 +470,14 @@ def main(argv: list[str] | None = None) -> None:
                 "缺少登录信息：请通过参数 --username/--password，或环境变量 DT_CRAWLER_USERNAME/DT_CRAWLER_PASSWORD，"
                 "或在项目根目录创建 secrets.local.env 提供"
             )
-    login_flow(username, password, open_only=open_only, keep_open=keep_open, skip_login=skip_login)
+    login_flow(
+        username,
+        password,
+        open_only=open_only,
+        keep_open=keep_open,
+        skip_login=skip_login,
+        start_page=start_page,
+    )
 
 
 if __name__ == "__main__":
