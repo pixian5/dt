@@ -288,12 +288,13 @@ async def perform_login(
             )
             print(f"[INFO] 当前页未学习卡片索引：{unlearned_indices}")
             processed_count = 0
-            for idx in unlearned_indices:
+            total_unlearned = len(unlearned_indices)
+            for seq, idx in enumerate(unlearned_indices, start=1):
                 # 每次点击前重新确认在列表页
                 if "commendIndex" not in page.url:
                     await _recover_to_commend(page, current_page_text)
                     await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=8000)
-                print(f"[INFO] 点击第 {idx+1} 个未学习卡片")
+                print(f"[INFO] 点击第 {seq}/{total_unlearned} 个未学习卡片")
                 expected_page_text = current_page_text
                 # JS 直接点击以避免可见性/覆盖问题
                 pages_before = list(page.context.pages)
