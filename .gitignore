@@ -64,6 +64,9 @@ dmypy.json
 # Data
 data/output.csv
 
+# Secrets
+secrets.local.env
+
 # IDE
 .DS_Store
 .idea/

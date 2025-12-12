@@ -10,6 +10,25 @@ from playwright.async_api import async_playwright
 LOGIN_URL = "https://sso.dtdjzx.gov.cn/sso/login"
 
 
+def load_local_secrets() -> None:
+    candidates = [Path("secrets.local.env"), Path(__file__).resolve().parents[1] / "secrets.local.env"]
+    for p in candidates:
+        if not p.exists() or not p.is_file():
+            continue
+        try:
+            for line in p.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip().strip('"').strip("'")
+                if key and value and not os.getenv(key):
+                    os.environ[key] = value
+        except Exception:
+            return
+
+
 async def perform_login(username: str, password: str, open_only: bool, keep_open: bool) -> None:
     data_dir = Path("data")
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -60,6 +79,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    load_local_secrets()
     args = parse_args()
     open_only = bool(args.open_only)
     keep_open = bool(args.keep_open) or open_only
