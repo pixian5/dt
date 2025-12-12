@@ -251,7 +251,7 @@ async def perform_login(
                 pages_before = list(page.context.pages)
                 try:
                     click_ok = await page.evaluate(
-                        """(sel, n) => {
+                        """([sel, n]) => {
                             const els = document.querySelectorAll(sel);
                             const el = els[n];
                             if (!el) return false;
@@ -260,8 +260,7 @@ async def perform_login(
                             (img || el).click();
                             return true;
                         }""",
-                        VIDEO_CARD_SELECTOR,
-                        idx,
+                        [VIDEO_CARD_SELECTOR, idx],
                     )
                     if not click_ok:
                         print(f"[WARN] 卡片 {idx+1} 未找到，跳过")
