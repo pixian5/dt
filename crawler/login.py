@@ -193,16 +193,30 @@ async def perform_login(
                 await page.click("a.js-submit.tianze-loginbtn")
                 await page.wait_for_timeout(3000)
 
-        # 跳转到 index 再到 commendIndex，记录当前页码
+        # 跳转到 index，检查【用户登录】按钮并点击（如有），再跳转 commendIndex，记录当前页码
         try:
             print(f"[INFO] 跳转到首页：{INDEX_URL}")
             await page.goto(INDEX_URL, wait_until="networkidle")
             await page.wait_for_timeout(2000)
+            # 检查是否有【用户登录】按钮，如有则点击
+            try:
+                login_btn = await page.query_selector("text=用户登录")
+                if login_btn:
+                    print("[INFO] 检测到【用户登录】按钮，点击登录")
+                    await login_btn.click()
+                    await page.wait_for_timeout(2000)
+            except Exception:
+                pass
             print(f"[INFO] 跳转到列表页：{COMMEND_URL}")
             await page.goto(COMMEND_URL, wait_until="networkidle")
             await page.wait_for_timeout(2000)
             page_num = await _get_active_page_number(page)
             print(f"[INFO] 当前页码：{page_num}")
+            if not page_num:
+                print("[WARN] 未能读取页码，可能页面未完全加载，等待后重试")
+                await page.wait_for_timeout(3000)
+                page_num = await _get_active_page_number(page)
+                print(f"[INFO] 重试后页码：{page_num}")
         except Exception as exc:  # pylint: disable=broad-except
             print(f"[WARN] 目标页操作失败：{exc}")
 
