@@ -107,9 +107,15 @@ def main() -> None:
         urls.extend(args.urls)
     if args.url_file:
         urls.extend(load_urls_from_file(args.url_file))
+    if not urls and not args.url_file:
+        default_url_file = Path("urls.txt")
+        if not default_url_file.exists():
+            default_url_file = Path(__file__).resolve().parents[1] / "urls.txt"
+        if default_url_file.exists():
+            urls.extend(load_urls_from_file(default_url_file))
     urls = [u.strip() for u in urls if u and u.strip()]
     if not urls:
-        raise SystemExit("请通过 --urls 或 --url-file 提供至少一个 URL")
+        raise SystemExit("请通过 --urls 或 --url-file 提供至少一个 URL（或在项目根目录放置 urls.txt）")
 
     results = crawl(urls, timeout=args.timeout, retries=args.retries, user_agent=args.user_agent)
     save_to_csv(results, args.output)
