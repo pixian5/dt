@@ -161,7 +161,7 @@ async def perform_login(
             print("[INFO] 跳过登录，直接进行后续操作")
         else:
             print(f"[INFO] 打开登录页：{LOGIN_URL}")
-            await page.goto(LOGIN_URL, wait_until="load")
+            await page.goto(LOGIN_URL, wait_until="load", timeout=30000)
             await page.wait_for_timeout(1000)
 
             auto_logged_in = False
@@ -196,7 +196,7 @@ async def perform_login(
         # 跳转到 index，检查【用户登录】按钮并点击（如有），再跳转 commendIndex，记录当前页码
         try:
             print(f"[INFO] 跳转到首页：{INDEX_URL}")
-            await page.goto(INDEX_URL, wait_until="networkidle")
+            await page.goto(INDEX_URL, wait_until="networkidle", timeout=30000)
             await page.wait_for_timeout(2000)
             # 检查是否有【用户登录】按钮，如有则点击
             try:
@@ -208,7 +208,7 @@ async def perform_login(
             except Exception:
                 pass
             print(f"[INFO] 跳转到列表页：{COMMEND_URL}")
-            await page.goto(COMMEND_URL, wait_until="networkidle")
+            await page.goto(COMMEND_URL, wait_until="networkidle", timeout=30000)
             await page.wait_for_timeout(2000)
             page_num = await _get_active_page_number(page)
             print(f"[INFO] 当前页码：{page_num}")
