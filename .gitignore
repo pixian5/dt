@@ -63,6 +63,7 @@ dmypy.json
 
 # Data
 data/output.csv
+data/login_result.png
 
 # Secrets
 secrets.local.env

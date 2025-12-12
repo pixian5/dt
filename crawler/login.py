@@ -73,7 +73,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--username", default=None, help="登录用户名")
     parser.add_argument("--password", default=None, help="登录密码")
     parser.add_argument("--open-only", action="store_true", help="仅打开登录页，不自动填写/提交")
-    parser.add_argument("--keep-open", action="store_true", help="保持浏览器窗口，直到 Ctrl+C 退出")
+    parser.add_argument(
+        "--close-after", action="store_true", help="登录完成后自动关闭浏览器（默认保持打开，按 Ctrl+C 退出）"
+    )
     return parser.parse_args(argv)
 
 
@@ -85,7 +87,7 @@ def main(argv: list[str] | None = None) -> None:
     load_local_secrets()
     args = parse_args(argv)
     open_only = bool(args.open_only)
-    keep_open = bool(args.keep_open) or open_only
+    keep_open = (not bool(args.close_after)) or open_only
 
     username = args.username or os.getenv("DT_CRAWLER_USERNAME") or ""
     password = args.password or os.getenv("DT_CRAWLER_PASSWORD") or ""
