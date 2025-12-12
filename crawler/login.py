@@ -18,14 +18,20 @@ async def perform_login(username: str, password: str, open_only: bool, keep_open
         page = await browser.new_page()
         print(f"[INFO] 打开登录页：{LOGIN_URL}")
         await page.goto(LOGIN_URL, wait_until="load")
+        await page.wait_for_selector("#username")
+        await page.wait_for_selector("#password")
+        await page.wait_for_selector("#validateCode")
 
         if not open_only:
             await page.fill("#username", username)
             await page.fill("#password", password)
 
             captcha = input("请输入验证码（validateCode）：").strip()
+            if not captcha:
+                raise SystemExit("验证码不能为空")
             await page.fill("#validateCode", captcha)
 
+            await page.wait_for_selector("a.js-submit.tianze-loginbtn")
             await page.click("a.js-submit.tianze-loginbtn")
             await page.wait_for_timeout(3000)
 
