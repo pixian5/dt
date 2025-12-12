@@ -223,6 +223,7 @@ async def perform_login(
         # 遍历分页
         while True:
             current_page_text = await _get_active_page_number(page)
+            print(f"[INFO] ========== 开始处理第 {current_page_text} 页 ==========")
             await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=8000)
             # 用 JS 一次性获取所有未学习卡片的索引
             unlearned_indices = await page.evaluate(
@@ -335,7 +336,9 @@ async def perform_login(
             try:
                 target_text = await _get_next_page_target(current_page_text)
                 if not target_text:
+                    print("[INFO] 没有下一页目标，结束遍历")
                     break
+                print(f"[INFO] 尝试跳转到第 {target_text} 页")
                 numbers = await page.query_selector_all(".number")
                 target_btn = None
                 for n in numbers:
@@ -346,8 +349,9 @@ async def perform_login(
                 if not target_btn:
                     quick = await page.query_selector(".btn-quicknext")
                     if quick:
+                        print("[INFO] 点击 btn-quicknext 展开更多页码")
                         await quick.click()
-                        await page.wait_for_timeout(500)
+                        await page.wait_for_timeout(800)
                         numbers = await page.query_selector_all(".number")
                         for n in numbers:
                             txt = (await n.inner_text()).strip()
@@ -355,14 +359,24 @@ async def perform_login(
                                 target_btn = n
                                 break
                 if not target_btn:
+                    print(f"[WARN] 未找到第 {target_text} 页按钮，结束遍历")
                     break
                 classes = (await target_btn.get_attribute("class")) or ""
                 disabled = "disabled" in classes or "is-disabled" in classes
                 if disabled:
+                    print(f"[INFO] 第 {target_text} 页按钮已禁用，结束遍历")
                     break
                 await target_btn.click()
-                await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=6000)
-            except Exception:
+                await page.wait_for_timeout(1500)
+                await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=8000)
+                # 验证是否真的翻到了目标页
+                new_page_text = await _get_active_page_number(page)
+                if new_page_text != target_text:
+                    print(f"[WARN] 翻页后页码为 {new_page_text}，期望 {target_text}，尝试恢复")
+                    await _goto_page_number(page, target_text)
+                    await page.wait_for_timeout(800)
+            except Exception as exc:
+                print(f"[WARN] 翻页失败：{exc}")
                 break
 
         if keep_open:
