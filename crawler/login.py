@@ -288,6 +288,7 @@ async def perform_login(
             )
             print(f"[INFO] 当前页未学习卡片索引：{unlearned_indices}")
             processed_count = 0
+            no_test_url_count = 0
             total_unlearned = len(unlearned_indices)
             for seq, idx in enumerate(unlearned_indices, start=1):
                 # 每次点击前重新确认在列表页
@@ -355,6 +356,7 @@ async def perform_login(
                     print(f"[INFO] 详情页文本：{text}，URL：{detail_url}")
                     if text == "否":
                         await _append_url(detail_url)
+                        no_test_url_count += 1
                         print(f"[INFO] 已记录：{detail_url}")
                     elif text == "是":
                         print('[INFO] 详情页为"是"，直接返回')
@@ -388,7 +390,9 @@ async def perform_login(
                         print("[WARN] 关闭标签后未找到卡片，尝试恢复到列表页")
                         await _recover_to_commend(page, expected_page_text)
                         await page.wait_for_timeout(1000)
-            print(f"[INFO] 本页处理完成，共处理 {processed_count} 个未学习卡片")
+            print(
+                f"[INFO] 本页处理完成，共处理 {processed_count} 个未学习卡片，无随堂测验url数：{no_test_url_count}"
+            )
 
             if end_page is not None and end_page > 0 and current_page_text == str(end_page):
                 print(f"[INFO] 已到达末页 {end_page}，停止扫描")
@@ -442,7 +446,7 @@ async def perform_login(
                 break
 
         if keep_open:
-            print("[INFO] 浏览器已打开。按 Ctrl+C 退出并关闭浏览器。")
+            print("[INFO] 扫描完成！浏览器已打开。按 Ctrl+C 退出并关闭浏览器。")
             try:
                 while True:
                     await asyncio.sleep(3600)
