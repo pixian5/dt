@@ -8,11 +8,11 @@ from playwright.async_api import async_playwright
 LOGIN_URL = "https://sso.dtdjzx.gov.cn/sso/login"
 
 
-async def perform_login(username: str, password: str, headless: bool) -> None:
+async def perform_login(username: str, password: str) -> None:
     data_dir = Path("data")
     data_dir.mkdir(parents=True, exist_ok=True)
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=headless)
+        browser = await p.chromium.launch(headless=False)
         page = await browser.new_page()
         print(f"[INFO] 打开登录页：{LOGIN_URL}")
         await page.goto(LOGIN_URL, wait_until="load")
@@ -34,8 +34,7 @@ async def perform_login(username: str, password: str, headless: bool) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="使用 Playwright 执行登录并保存截图")
-    parser.add_argument("--headless", action="store_true", help="无头模式运行（默认可视化）")
+    parser = argparse.ArgumentParser(description="使用 Playwright 执行登录并保存截图（始终可视化模式）")
     parser.add_argument("--username", default="15610654296", help="登录用户名")
     parser.add_argument("--password", default="136763FGS", help="登录密码")
     return parser.parse_args()
@@ -43,7 +42,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    asyncio.run(perform_login(args.username, args.password, args.headless))
+    asyncio.run(perform_login(args.username, args.password))
 
 
 if __name__ == "__main__":
