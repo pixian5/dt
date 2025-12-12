@@ -1,7 +1,6 @@
 import argparse
 import asyncio
 import os
-import getpass
 from pathlib import Path
 
 from playwright.async_api import async_playwright
@@ -87,12 +86,11 @@ def main() -> None:
     username = args.username or os.getenv("DT_CRAWLER_USERNAME") or ""
     password = args.password or os.getenv("DT_CRAWLER_PASSWORD") or ""
     if not open_only:
-        if not username:
-            username = input("请输入登录用户名：").strip()
-        if not password:
-            password = getpass.getpass("请输入登录密码：").strip()
         if not username or not password:
-            raise SystemExit("用户名/密码不能为空")
+            raise SystemExit(
+                "缺少登录信息：请通过参数 --username/--password，或环境变量 DT_CRAWLER_USERNAME/DT_CRAWLER_PASSWORD，"
+                "或在项目根目录创建 secrets.local.env 提供"
+            )
     asyncio.run(perform_login(username, password, open_only=open_only, keep_open=keep_open))
 
 
