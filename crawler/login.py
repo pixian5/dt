@@ -321,7 +321,12 @@ async def perform_login(
                         pass
                     await page.wait_for_timeout(800)
                     await _recover_to_commend(page, expected_page_text)
-                    await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=8000)
+                    try:
+                        await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=8000)
+                    except Exception:
+                        print("[WARN] 返回后未找到卡片，尝试恢复到列表页")
+                        await _recover_to_commend(page, expected_page_text)
+                        await page.wait_for_timeout(1000)
                 else:
                     try:
                         await target_page.close()
@@ -329,7 +334,12 @@ async def perform_login(
                         pass
                     await page.bring_to_front()
                     await _recover_to_commend(page, expected_page_text)
-                    await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=8000)
+                    try:
+                        await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=8000)
+                    except Exception:
+                        print("[WARN] 关闭标签后未找到卡片，尝试恢复到列表页")
+                        await _recover_to_commend(page, expected_page_text)
+                        await page.wait_for_timeout(1000)
             print(f"[INFO] 本页处理完成，共处理 {processed_count} 个未学习卡片")
 
             # 尝试下一页
