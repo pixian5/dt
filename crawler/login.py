@@ -79,16 +79,16 @@ async def perform_login(
                 await page.click("a.js-submit.tianze-loginbtn")
                 await page.wait_for_timeout(3000)
 
-        # 跳转并点击目标元素
-        try:
-            print(f"[INFO] 跳转到目标页：{TARGET_URL}")
-            await page.goto(TARGET_URL, wait_until="load")
-            await page.wait_for_selector(TARGET_TAB_SELECTOR, timeout=10000)
-            await page.click(TARGET_TAB_SELECTOR)
-            img = await page.wait_for_selector(TARGET_IMAGE_SELECTOR, timeout=10000)
-            await img.click()
-        except Exception as exc:  # pylint: disable=broad-except
-            print(f"[WARN] 目标页操作失败：{exc}")
+            # 跳转并点击目标元素
+            try:
+                print(f"[INFO] 跳转到目标页：{TARGET_URL}")
+                await page.goto(TARGET_URL, wait_until="load")
+                await page.wait_for_selector(TARGET_TAB_SELECTOR, timeout=10000)
+                await page.click(TARGET_TAB_SELECTOR)
+                img = await page.wait_for_selector(TARGET_IMAGE_SELECTOR, timeout=10000)
+                await img.click()
+            except Exception as exc:  # pylint: disable=broad-except
+                print(f"[WARN] 目标页操作失败：{exc}")
 
         if keep_open:
             print("[INFO] 浏览器已打开。按 Ctrl+C 退出并关闭浏览器。")
