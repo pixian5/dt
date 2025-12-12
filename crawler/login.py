@@ -161,7 +161,7 @@ async def perform_login(
             print("[INFO] 跳过登录，直接进行后续操作")
         else:
             print(f"[INFO] 打开登录页：{LOGIN_URL}")
-            await page.goto(LOGIN_URL, wait_until="load", timeout=30000)
+            await page.goto(LOGIN_URL, wait_until="load", timeout=10000)
             await page.wait_for_timeout(1000)
 
             auto_logged_in = False
@@ -223,98 +223,115 @@ async def perform_login(
         # 遍历分页
         while True:
             current_page_text = await _get_active_page_number(page)
-            await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=4000)
-            card_count = await page.locator(VIDEO_CARD_SELECTOR).count()
-            print(f"[INFO] 当前页卡片数量：{card_count}")
-            for idx in range(card_count):
-                card_loc = page.locator(VIDEO_CARD_SELECTOR).nth(idx)
+            await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=8000)
+            # 用 JS 一次性获取所有未学习卡片的索引
+            unlearned_indices = await page.evaluate(
+                """(cardSel, stateSel) => {
+                    const cards = Array.from(document.querySelectorAll(cardSel));
+                    const result = [];
+                    cards.forEach((c, idx) => {
+                        const s = c.querySelector(stateSel);
+                        const t = s ? (s.innerText || '').trim() : '';
+                        if (t === '未学习') result.push(idx);
+                    });
+                    return result;
+                }""",
+                VIDEO_CARD_SELECTOR,
+                STATE_SELECTOR,
+            )
+            print(f"[INFO] 当前页未学习卡片索引：{unlearned_indices}")
+            processed_count = 0
+            for idx in unlearned_indices:
+                # 每次点击前重新确认在列表页
+                if "commendIndex" not in page.url:
+                    await _recover_to_commend(page, current_page_text)
+                    await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=8000)
+                print(f"[INFO] 点击第 {idx+1} 个未学习卡片")
+                expected_page_text = current_page_text
+                # JS 直接点击以避免可见性/覆盖问题
+                pages_before = list(page.context.pages)
                 try:
-                    state_loc = card_loc.locator(STATE_SELECTOR)
-                    state_text = (await state_loc.inner_text(timeout=2000)).strip() if await state_loc.count() else ""
-                    if state_text != "未学习":
+                    click_ok = await page.evaluate(
+                        """(sel, n) => {
+                            const els = document.querySelectorAll(sel);
+                            const el = els[n];
+                            if (!el) return false;
+                            el.scrollIntoView({behavior:'instant', block:'center'});
+                            const img = el.querySelector('img');
+                            (img || el).click();
+                            return true;
+                        }""",
+                        VIDEO_CARD_SELECTOR,
+                        idx,
+                    )
+                    if not click_ok:
+                        print(f"[WARN] 卡片 {idx+1} 未找到，跳过")
                         continue
-                    print(f"[INFO] 点击第 {idx+1} 个未学习卡片")
-                    expected_page_text = current_page_text
-                    # JS 直接点击以避免可见性/覆盖问题
-                    pages_before = list(page.context.pages)
+                except Exception:
+                    print(f"[WARN] 卡片 {idx+1} 点击失败，跳过")
+                    continue
+                await page.wait_for_timeout(1000)
+                pages_after = list(page.context.pages)
+                new_pages = [pg for pg in pages_after if pg not in pages_before]
+                target_page = new_pages[-1] if new_pages else page
+
+                if target_page is page:
                     try:
-                        await page.evaluate(
-                            """(sel, n) => {
-                                const els = document.querySelectorAll(sel);
-                                const el = els[n];
-                                if (!el) return false;
-                                el.scrollIntoView({behavior:'instant', block:'center'});
-                                const img = el.querySelector('img');
-                                (img || el).click();
-                                return true;
-                            }""",
-                            VIDEO_CARD_SELECTOR,
-                            idx,
+                        await page.wait_for_function(
+                            "() => location.href.includes('commend/coursedetail') || location.href.includes('/index') || location.href.includes('commendIndex')",
+                            timeout=5000,
                         )
                     except Exception:
-                        print(f"[WARN] 卡片 {idx+1} 点击失败，跳过")
-                        continue
-                    await page.wait_for_timeout(800)
-                    pages_after = list(page.context.pages)
-                    new_pages = [pg for pg in pages_after if pg not in pages_before]
-                    target_page = new_pages[-1] if new_pages else page
-
-                    if target_page is page:
-                        try:
-                            await page.wait_for_function(
-                                "() => location.href.includes('commend/coursedetail') || location.href.includes('/index') || location.href.includes('commendIndex')",
-                                timeout=4000,
-                            )
-                        except Exception:
-                            pass
-                        if "coursedetail" not in page.url:
-                            if page.url.startswith(INDEX_URL) or page.url.endswith("/index"):
-                                await _recover_to_commend(page, expected_page_text)
-                            else:
-                                await _recover_to_commend(page, expected_page_text)
-                            continue
-                    else:
-                        try:
-                            await target_page.bring_to_front()
-                        except Exception:
-                            pass
-                        await target_page.wait_for_timeout(500)
-                        if "coursedetail" not in target_page.url:
-                            try:
-                                await target_page.close()
-                            except Exception:
-                                pass
-                            await _recover_to_commend(page, expected_page_text)
-                            continue
-
-                    detail_url = target_page.url
-                    text = await _wait_detail_yes_no(target_page)
-                    if text:
-                        print(f"[INFO] 详情页文本：{text}，URL：{detail_url}")
-                        if text == "否":
-                            await _append_url(detail_url)
-                            print(f"[INFO] 已记录：{detail_url}")
-                        elif text == "是":
-                            print("[INFO] 详情页为“是”，直接返回")
-                    # 返回上一页或关闭新标签
-                    if target_page is page:
-                        try:
-                            await page.go_back(wait_until="networkidle")
-                        except Exception:
-                            pass
-                        await page.wait_for_timeout(500)
+                        pass
+                    if "coursedetail" not in page.url:
                         await _recover_to_commend(page, expected_page_text)
-                        await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=4000)
-                    else:
+                        await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=8000)
+                        continue
+                else:
+                    try:
+                        await target_page.bring_to_front()
+                    except Exception:
+                        pass
+                    await target_page.wait_for_timeout(500)
+                    if "coursedetail" not in target_page.url:
                         try:
                             await target_page.close()
                         except Exception:
                             pass
                         await _recover_to_commend(page, expected_page_text)
-                        await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=4000)
-                except Exception as exc:
-                    print(f"[WARN] 处理卡片 {idx+1} 失败：{exc}")
-                    continue
+                        await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=8000)
+                        continue
+
+                detail_url = target_page.url
+                text = await _wait_detail_yes_no(target_page)
+                if text:
+                    print(f"[INFO] 详情页文本：{text}，URL：{detail_url}")
+                    if text == "否":
+                        await _append_url(detail_url)
+                        print(f"[INFO] 已记录：{detail_url}")
+                    elif text == "是":
+                        print('[INFO] 详情页为"是"，直接返回')
+                else:
+                    print(f"[WARN] 详情页未读取到是/否，URL：{detail_url}")
+                processed_count += 1
+                # 返回上一页或关闭新标签
+                if target_page is page:
+                    try:
+                        await page.go_back(wait_until="networkidle", timeout=15000)
+                    except Exception:
+                        pass
+                    await page.wait_for_timeout(800)
+                    await _recover_to_commend(page, expected_page_text)
+                    await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=8000)
+                else:
+                    try:
+                        await target_page.close()
+                    except Exception:
+                        pass
+                    await page.bring_to_front()
+                    await _recover_to_commend(page, expected_page_text)
+                    await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=8000)
+            print(f"[INFO] 本页处理完成，共处理 {processed_count} 个未学习卡片")
 
             # 尝试下一页
             try:
