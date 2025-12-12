@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import os
 from pathlib import Path
 
 from playwright.async_api import async_playwright
@@ -35,14 +36,18 @@ async def perform_login(username: str, password: str) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="使用 Playwright 执行登录并保存截图（始终可视化模式）")
-    parser.add_argument("--username", default="15610654296", help="登录用户名")
-    parser.add_argument("--password", default="136763FGS", help="登录密码")
+    parser.add_argument("--username", default=None, help="登录用户名")
+    parser.add_argument("--password", default=None, help="登录密码")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    asyncio.run(perform_login(args.username, args.password))
+    username = args.username or os.getenv("DT_CRAWLER_USERNAME")
+    password = args.password or os.getenv("DT_CRAWLER_PASSWORD")
+    if not username or not password:
+        raise SystemExit("请通过 --username/--password 或环境变量 DT_CRAWLER_USERNAME/DT_CRAWLER_PASSWORD 提供登录信息")
+    asyncio.run(perform_login(username, password))
 
 
 if __name__ == "__main__":

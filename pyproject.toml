@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dt-crawler"
+version = "0.1.0"
+description = "Python 爬虫项目"
+requires-python = ">=3.10"
+dependencies = [
+  "requests>=2.32.0",
+  "beautifulsoup4>=4.12.0",
+  "playwright>=1.45.0",
+]
+
+[project.scripts]
+dt-crawler = "crawler.main:main"
+dt-crawler-login = "crawler.login:main"
+
+[tool.setuptools]
+packages = ["crawler"]

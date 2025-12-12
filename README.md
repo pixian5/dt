@@ -9,9 +9,9 @@
 ### 本地运行（需 Python 3.10+）
 1. 安装依赖：
    ```bash
-   python -m venv .venv
+   python3 -m venv .venv
    source .venv/bin/activate
-   pip install -r requirements.txt
+   pip install -e .
    ```
 2. 运行示例：
    ```bash
@@ -21,13 +21,6 @@
    ```bash
    python -m crawler.main --url-file urls.txt
    ```
-
-### Docker 运行
-```bash
-docker build -t python-crawler .
-docker run --rm -v "$(pwd)/data:/app/data" python-crawler \
-  python -m crawler.main --urls https://example.com
-```
 
 ## 目录结构
 - `crawler/`：核心代码
