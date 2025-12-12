@@ -38,8 +38,23 @@ async def perform_login(username: str, password: str, open_only: bool, keep_open
     data_dir = Path("data")
     data_dir.mkdir(parents=True, exist_ok=True)
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False)
-        page = await browser.new_page()
+        reuse_browser = False
+        browser = None
+        page = None
+        endpoint = os.getenv("PLAYWRIGHT_CDP_ENDPOINT", "http://127.0.0.1:9222")
+        try:
+            browser = await p.chromium.connect_over_cdp(endpoint)
+            reuse_browser = True
+            print(f"[INFO] 复用已启动的浏览器：{endpoint}")
+        except Exception:
+            browser = await p.chromium.launch(
+                headless=False,
+                args=["--remote-debugging-port=9222"],
+            )
+            print("[INFO] 启动新浏览器（启用 CDP 端口 9222 以便下次复用）")
+
+        context = browser.contexts[0] if browser.contexts else await browser.new_context()
+        page = await context.new_page()
         print(f"[INFO] 打开登录页：{LOGIN_URL}")
         await page.goto(LOGIN_URL, wait_until="load")
         await page.wait_for_selector("#username")
@@ -77,8 +92,13 @@ async def perform_login(username: str, password: str, open_only: bool, keep_open
                     await asyncio.sleep(3600)
             except KeyboardInterrupt:
                 pass
-
-        await browser.close()
+        else:
+            try:
+                await page.close()
+            except Exception:
+                pass
+            if not reuse_browser:
+                await browser.close()
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
