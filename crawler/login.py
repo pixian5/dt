@@ -7,6 +7,12 @@ from playwright.async_api import async_playwright
 
 
 LOGIN_URL = "https://sso.dtdjzx.gov.cn/sso/login"
+TARGET_URL = "https://gbwlxy.dtdjzx.gov.cn/content#/commendIndex"
+TARGET_TAB_SELECTOR = ".left-warp-classify2.active2"
+TARGET_IMAGE_SELECTOR = (
+    "#domhtml > div.app-wrapper.openSidebar > div > section > div > div > "
+    "div.container-warp-index > div.right-warp > div > div:nth-child(2) > div:nth-child(1) > img"
+)
 
 
 def load_local_secrets() -> None:
@@ -53,9 +59,16 @@ async def perform_login(username: str, password: str, open_only: bool, keep_open
             await page.click("a.js-submit.tianze-loginbtn")
             await page.wait_for_timeout(3000)
 
-            screenshot_path = data_dir / "login_result.png"
-            await page.screenshot(path=screenshot_path, full_page=True)
-            print(f"[INFO] 已点击登录，截图保存：{screenshot_path}")
+            # 跳转并点击目标元素
+            try:
+                print(f"[INFO] 跳转到目标页：{TARGET_URL}")
+                await page.goto(TARGET_URL, wait_until="load")
+                await page.wait_for_selector(TARGET_TAB_SELECTOR, timeout=10000)
+                await page.click(TARGET_TAB_SELECTOR)
+                img = await page.wait_for_selector(TARGET_IMAGE_SELECTOR, timeout=10000)
+                await img.click()
+            except Exception as exc:  # pylint: disable=broad-except
+                print(f"[WARN] 目标页操作失败：{exc}")
 
         if keep_open:
             print("[INFO] 浏览器已打开。按 Ctrl+C 退出并关闭浏览器。")
