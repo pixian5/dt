@@ -68,18 +68,22 @@ async def perform_login(username: str, password: str, open_only: bool, keep_open
         await browser.close()
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="使用 Playwright 执行登录并保存截图（始终可视化模式）")
     parser.add_argument("--username", default=None, help="登录用户名")
     parser.add_argument("--password", default=None, help="登录密码")
     parser.add_argument("--open-only", action="store_true", help="仅打开登录页，不自动填写/提交")
     parser.add_argument("--keep-open", action="store_true", help="保持浏览器窗口，直到 Ctrl+C 退出")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> None:
+def login_flow(username: str, password: str, open_only: bool, keep_open: bool) -> None:
+    asyncio.run(perform_login(username, password, open_only=open_only, keep_open=keep_open))
+
+
+def main(argv: list[str] | None = None) -> None:
     load_local_secrets()
-    args = parse_args()
+    args = parse_args(argv)
     open_only = bool(args.open_only)
     keep_open = bool(args.keep_open) or open_only
 
@@ -91,7 +95,7 @@ def main() -> None:
                 "缺少登录信息：请通过参数 --username/--password，或环境变量 DT_CRAWLER_USERNAME/DT_CRAWLER_PASSWORD，"
                 "或在项目根目录创建 secrets.local.env 提供"
             )
-    asyncio.run(perform_login(username, password, open_only=open_only, keep_open=keep_open))
+    login_flow(username, password, open_only=open_only, keep_open=keep_open)
 
 
 if __name__ == "__main__":
