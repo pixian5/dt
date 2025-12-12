@@ -33,7 +33,12 @@ async def perform_login(username: str, password: str, open_only: bool, keep_open
             print(f"[INFO] 已点击登录，截图保存：{screenshot_path}")
 
         if keep_open:
-            await asyncio.get_running_loop().run_in_executor(None, input, "浏览器已打开。操作完成后按回车关闭... ")
+            print("[INFO] 浏览器已打开。按 Ctrl+C 退出并关闭浏览器。")
+            try:
+                while True:
+                    await asyncio.sleep(3600)
+            except KeyboardInterrupt:
+                pass
 
         await browser.close()
 
@@ -43,7 +48,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--username", default=None, help="登录用户名")
     parser.add_argument("--password", default=None, help="登录密码")
     parser.add_argument("--open-only", action="store_true", help="仅打开登录页，不自动填写/提交")
-    parser.add_argument("--keep-open", action="store_true", help="保持浏览器窗口，直到手动回车关闭")
+    parser.add_argument("--keep-open", action="store_true", help="保持浏览器窗口，直到 Ctrl+C 退出")
     return parser.parse_args()
 
 
