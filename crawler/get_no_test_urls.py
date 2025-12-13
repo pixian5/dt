@@ -97,7 +97,7 @@ async def _recover_to_commend(page: Page, expected_page_text: str) -> None:
     if "/content#/commendIndex" not in page.url:
         try:
             await call_with_timeout_retry(
-                page.goto, "恢复到列表页", COMMEND_URL, wait_until="networkidle", timeout=PW_TIMEOUT_MS
+                page.goto, "恢复到列表页", COMMEND_URL, wait_until="domcontentloaded", timeout=PW_TIMEOUT_MS
             )
             await page.wait_for_timeout(800)
         except Exception:
@@ -193,7 +193,7 @@ async def perform_scan(
 
         await page.wait_for_timeout(1000)
         await call_with_timeout_retry(
-            page.goto, "登录后回到列表页", COMMEND_URL, wait_until="networkidle", timeout=PW_TIMEOUT_MS
+            page.goto, "登录后回到列表页", COMMEND_URL, wait_until="domcontentloaded", timeout=PW_TIMEOUT_MS
         )
         ref_text = await _get_user_login_reference_text(page)
         if ref_text == "用户登录":
@@ -206,7 +206,7 @@ async def perform_scan(
             await page.wait_for_timeout(2000)
 
         await call_with_timeout_retry(
-            page.goto, "二次进入列表页", COMMEND_URL, wait_until="networkidle", timeout=PW_TIMEOUT_MS
+            page.goto, "二次进入列表页", COMMEND_URL, wait_until="domcontentloaded", timeout=PW_TIMEOUT_MS
         )
         await page.wait_for_timeout(500)
         page_num = await _get_active_page_number(page)
@@ -227,12 +227,24 @@ async def perform_scan(
         while True:
             current_page_text = await _get_active_page_number(page)
             print(f"[INFO] ========== 开始处理第 {current_page_text} 页 ==========")
-            await call_with_timeout_retry(
-                page.wait_for_selector,
-                "等待列表卡片",
-                f"{CARD_CONTAINER_SELECTOR} {VIDEO_CARD_SELECTOR}",
-                timeout=PW_TIMEOUT_MS,
-            )
+            try:
+                await call_with_timeout_retry(
+                    page.wait_for_selector,
+                    "等待列表卡片",
+                    f"{CARD_CONTAINER_SELECTOR} {VIDEO_CARD_SELECTOR}",
+                    timeout=PW_TIMEOUT_MS,
+                    state="attached",
+                )
+            except PlaywrightTimeoutError:
+                print("[WARN] 等待列表卡片超时，尝试恢复到列表页后重试 1 次")
+                await _recover_to_commend(page, current_page_text)
+                await call_with_timeout_retry(
+                    page.wait_for_selector,
+                    "等待列表卡片",
+                    f"{CARD_CONTAINER_SELECTOR} {VIDEO_CARD_SELECTOR}",
+                    timeout=PW_TIMEOUT_MS,
+                    state="attached",
+                )
 
             cards = page.locator(f"{CARD_CONTAINER_SELECTOR} {VIDEO_CARD_SELECTOR}")
             card_count = await cards.count()
@@ -263,6 +275,7 @@ async def perform_scan(
                     "等待列表卡片",
                     f"{CARD_CONTAINER_SELECTOR} {VIDEO_CARD_SELECTOR}",
                     timeout=PW_TIMEOUT_MS,
+                    state="attached",
                 )
 
                 print(f"[INFO] 点击第 {seq}/{total_unlearned} 个未学习卡片")
@@ -424,6 +437,7 @@ async def perform_scan(
                     "等待列表卡片",
                     f"{CARD_CONTAINER_SELECTOR} {VIDEO_CARD_SELECTOR}",
                     timeout=PW_TIMEOUT_MS,
+                    state="attached",
                 )
                 new_page_text = await _get_active_page_number(page)
                 if new_page_text != target_text:
