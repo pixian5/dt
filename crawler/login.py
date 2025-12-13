@@ -3,12 +3,27 @@ import asyncio
 import os
 from pathlib import Path
 
-from playwright.async_api import async_playwright, Page
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError, async_playwright, Page
 
 
 LOGIN_URL = "https://sso.dtdjzx.gov.cn/sso/login"
 INDEX_URL = "https://gbwlxy.dtdjzx.gov.cn/index"
 COMMEND_URL = "https://gbwlxy.dtdjzx.gov.cn/content#/commendIndex"
+
+PW_TIMEOUT_MS = 5000
+
+
+async def call_with_timeout_retry(func, action: str, /, *args, **kwargs):
+    timeout = kwargs.get("timeout")
+    if timeout is None:
+        kwargs["timeout"] = PW_TIMEOUT_MS
+    else:
+        kwargs["timeout"] = min(int(timeout), PW_TIMEOUT_MS)
+    try:
+        return await func(*args, **kwargs)
+    except PlaywrightTimeoutError:
+        print(f"[WARN] {action} 超时 {PW_TIMEOUT_MS}ms，重试 1 次")
+        return await func(*args, **kwargs)
 
 
 def load_local_secrets() -> None:
@@ -33,10 +48,14 @@ def load_local_secrets() -> None:
 
 async def _is_logged_in(page: Page) -> bool:
     try:
-        await page.goto(COMMEND_URL, wait_until="networkidle", timeout=30000)
+        await call_with_timeout_retry(
+            page.goto, "检测登录状态：打开列表页", COMMEND_URL, wait_until="networkidle", timeout=PW_TIMEOUT_MS
+        )
         if "sso.dtdjzx.gov.cn" in page.url or "sso/login" in page.url:
             return False
-        await page.wait_for_selector(".number.active", timeout=5000)
+        await call_with_timeout_retry(
+            page.wait_for_selector, "检测登录状态：等待页码", ".number.active", timeout=PW_TIMEOUT_MS
+        )
         return "commendIndex" in page.url
     except Exception:
         return False
@@ -54,7 +73,7 @@ async def ensure_logged_in(
         return
 
     print(f"[INFO] 未登录，打开登录页：{LOGIN_URL}")
-    await page.goto(LOGIN_URL, wait_until="load", timeout=30000)
+    await call_with_timeout_retry(page.goto, "打开登录页", LOGIN_URL, wait_until="load", timeout=PW_TIMEOUT_MS)
     await page.wait_for_timeout(1000)
 
     auto_logged_in = False
@@ -63,9 +82,9 @@ async def ensure_logged_in(
         print("[INFO] 已检测到跳转 member，视为已登录，跳过输入验证码")
     else:
         try:
-            await page.wait_for_selector("#username", timeout=4000)
-            await page.wait_for_selector("#password", timeout=4000)
-            await page.wait_for_selector("#validateCode", timeout=4000)
+            await call_with_timeout_retry(page.wait_for_selector, "等待用户名输入框", "#username", timeout=PW_TIMEOUT_MS)
+            await call_with_timeout_retry(page.wait_for_selector, "等待密码输入框", "#password", timeout=PW_TIMEOUT_MS)
+            await call_with_timeout_retry(page.wait_for_selector, "等待验证码输入框", "#validateCode", timeout=PW_TIMEOUT_MS)
         except Exception:
             if "dtdjzx.gov.cn/member" in page.url:
                 auto_logged_in = True
@@ -82,13 +101,15 @@ async def ensure_logged_in(
             raise SystemExit("验证码不能为空")
         await page.fill("#validateCode", captcha)
 
-        await page.wait_for_selector("a.js-submit.tianze-loginbtn", timeout=4000)
+        await call_with_timeout_retry(
+            page.wait_for_selector, "等待登录提交按钮", "a.js-submit.tianze-loginbtn", timeout=PW_TIMEOUT_MS
+        )
         await page.click("a.js-submit.tianze-loginbtn")
         await page.wait_for_timeout(3000)
 
     try:
         print(f"[INFO] 跳转到首页：{INDEX_URL}")
-        await page.goto(INDEX_URL, wait_until="networkidle", timeout=30000)
+        await call_with_timeout_retry(page.goto, "跳转到首页", INDEX_URL, wait_until="networkidle", timeout=PW_TIMEOUT_MS)
         await page.wait_for_timeout(2000)
         try:
             login_btn = await page.query_selector("text=用户登录")
@@ -99,7 +120,9 @@ async def ensure_logged_in(
         except Exception:
             pass
         print(f"[INFO] 跳转到列表页：{COMMEND_URL}")
-        await page.goto(COMMEND_URL, wait_until="networkidle", timeout=30000)
+        await call_with_timeout_retry(
+            page.goto, "跳转到列表页", COMMEND_URL, wait_until="networkidle", timeout=PW_TIMEOUT_MS
+        )
         await page.wait_for_timeout(1500)
     except Exception:
         return
@@ -124,7 +147,7 @@ async def perform_login(
             print("[INFO] 启动新浏览器（启用 CDP 端口 9222 以便下次复用）")
 
         context = browser.contexts[0] if browser.contexts else await browser.new_context()
-        context.set_default_timeout(4000)
+        context.set_default_timeout(PW_TIMEOUT_MS)
         page = await context.new_page()
         await ensure_logged_in(page, username=username, password=password, open_only=open_only, skip_login=skip_login)
 

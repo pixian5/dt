@@ -3,7 +3,7 @@ import asyncio
 import os
 from pathlib import Path
 
-from playwright.async_api import async_playwright, Page
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError, async_playwright, Page
 
 from crawler.login import COMMEND_URL, INDEX_URL, LOGIN_URL, ensure_logged_in, load_local_secrets
 
@@ -12,10 +12,25 @@ VIDEO_CARD_SELECTOR = ".video-warp-start"
 STATE_SELECTOR = ".state-paused"
 URL_OUTPUT_FILE = Path("url.txt")
 
+PW_TIMEOUT_MS = 5000
+
+
+async def call_with_timeout_retry(func, action: str, /, *args, **kwargs):
+    timeout = kwargs.get("timeout")
+    if timeout is None:
+        kwargs["timeout"] = PW_TIMEOUT_MS
+    else:
+        kwargs["timeout"] = min(int(timeout), PW_TIMEOUT_MS)
+    try:
+        return await func(*args, **kwargs)
+    except PlaywrightTimeoutError:
+        print(f"[WARN] {action} 超时 {PW_TIMEOUT_MS}ms，重试 1 次")
+        return await func(*args, **kwargs)
+
 
 async def _get_active_page_number(page: Page) -> str:
     try:
-        el = await page.wait_for_selector(".number.active", timeout=5000)
+        el = await call_with_timeout_retry(page.wait_for_selector, "获取当前页码", ".number.active", timeout=PW_TIMEOUT_MS)
         return (await el.inner_text()).strip()
     except Exception:
         return ""
@@ -47,7 +62,7 @@ async def _goto_page_number(page: Page, target_text: str) -> bool:
             if not quick:
                 return False
             await quick.click()
-            await page.wait_for_timeout(300)
+            await page.wait_for_timeout(900)
             numbers = await page.query_selector_all(".number")
             for n in numbers:
                 txt = (await n.inner_text()).strip()
@@ -63,7 +78,9 @@ async def _goto_page_number(page: Page, target_text: str) -> bool:
 async def _recover_to_commend(page: Page, expected_page_text: str) -> None:
     if "/content#/commendIndex" not in page.url:
         try:
-            await page.goto(COMMEND_URL, wait_until="networkidle", timeout=30000)
+            await call_with_timeout_retry(
+                page.goto, "恢复到列表页", COMMEND_URL, wait_until="networkidle", timeout=PW_TIMEOUT_MS
+            )
             await page.wait_for_timeout(800)
         except Exception:
             return
@@ -76,15 +93,23 @@ async def _recover_to_commend(page: Page, expected_page_text: str) -> None:
 
 async def _wait_detail_yes_no(page: Page) -> str:
     try:
-        await page.wait_for_selector("div.titleContent > span", timeout=15000, state="visible")
-        await page.wait_for_function(
+        await call_with_timeout_retry(
+            page.wait_for_selector,
+            "详情页等待是/否",
+            "div.titleContent > span",
+            timeout=PW_TIMEOUT_MS,
+            state="visible",
+        )
+        await call_with_timeout_retry(
+            page.wait_for_function,
+            "详情页等待是/否脚本",
             """() => {
                 const el = document.querySelector('div.titleContent > span');
                 if (!el) return false;
                 const t = (el.innerText || '').trim();
                 return t === '是' || t === '否';
             }""",
-            timeout=15000,
+            timeout=PW_TIMEOUT_MS,
         )
         el = await page.query_selector("div.titleContent > span")
         if not el:
@@ -154,20 +179,24 @@ async def perform_scan(
             print("[INFO] 启动新浏览器（启用 CDP 端口 9222 以便下次复用）")
 
         context = browser.contexts[0] if browser.contexts else await browser.new_context()
-        context.set_default_timeout(4000)
+        context.set_default_timeout(PW_TIMEOUT_MS)
         page = await context.new_page()
 
         await ensure_logged_in(page, username=username, password=password, open_only=open_only, skip_login=skip_login)
 
         try:
             print(f"[INFO] 跳转到首页：{INDEX_URL}")
-            await page.goto(INDEX_URL, wait_until="networkidle", timeout=30000)
+            await call_with_timeout_retry(
+                page.goto, "跳转到首页", INDEX_URL, wait_until="networkidle", timeout=PW_TIMEOUT_MS
+            )
             await page.wait_for_timeout(800)
         except Exception:
             pass
 
         print(f"[INFO] 跳转到列表页：{COMMEND_URL}")
-        await page.goto(COMMEND_URL, wait_until="networkidle", timeout=30000)
+        await call_with_timeout_retry(
+            page.goto, "跳转到列表页", COMMEND_URL, wait_until="networkidle", timeout=PW_TIMEOUT_MS
+        )
         await page.wait_for_timeout(1500)
         page_num = await _get_active_page_number(page)
         print(f"[INFO] 当前页码：{page_num}")
@@ -192,7 +221,9 @@ async def perform_scan(
         while True:
             current_page_text = await _get_active_page_number(page)
             print(f"[INFO] ========== 开始处理第 {current_page_text} 页 ==========")
-            await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=8000)
+            await call_with_timeout_retry(
+                page.wait_for_selector, "等待列表卡片", VIDEO_CARD_SELECTOR, timeout=PW_TIMEOUT_MS
+            )
 
             unlearned_indices = await page.evaluate(
                 """([cardSel, stateSel]) => {
@@ -216,7 +247,9 @@ async def perform_scan(
             for seq, idx in enumerate(unlearned_indices, start=1):
                 if "commendIndex" not in page.url:
                     await _recover_to_commend(page, current_page_text)
-                    await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=8000)
+                    await call_with_timeout_retry(
+                        page.wait_for_selector, "等待列表卡片", VIDEO_CARD_SELECTOR, timeout=PW_TIMEOUT_MS
+                    )
 
                 print(f"[INFO] 点击第 {seq}/{total_unlearned} 个未学习卡片")
                 expected_page_text = current_page_text
@@ -248,15 +281,19 @@ async def perform_scan(
 
                 if target_page is page:
                     try:
-                        await page.wait_for_function(
+                        await call_with_timeout_retry(
+                            page.wait_for_function,
+                            "等待详情页跳转",
                             "() => location.href.includes('commend/coursedetail') || location.href.includes('/index') || location.href.includes('commendIndex')",
-                            timeout=5000,
+                            timeout=PW_TIMEOUT_MS,
                         )
                     except Exception:
                         pass
                     if "coursedetail" not in page.url:
                         await _recover_to_commend(page, expected_page_text)
-                        await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=8000)
+                        await call_with_timeout_retry(
+                            page.wait_for_selector, "等待列表卡片", VIDEO_CARD_SELECTOR, timeout=PW_TIMEOUT_MS
+                        )
                         continue
                 else:
                     try:
@@ -270,7 +307,9 @@ async def perform_scan(
                         except Exception:
                             pass
                         await _recover_to_commend(page, expected_page_text)
-                        await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=8000)
+                        await call_with_timeout_retry(
+                            page.wait_for_selector, "等待列表卡片", VIDEO_CARD_SELECTOR, timeout=PW_TIMEOUT_MS
+                        )
                         continue
 
                 detail_url = target_page.url
@@ -290,13 +329,17 @@ async def perform_scan(
 
                 if target_page is page:
                     try:
-                        await page.go_back(wait_until="networkidle", timeout=15000)
+                        await call_with_timeout_retry(
+                            page.go_back, "返回列表页", wait_until="networkidle", timeout=PW_TIMEOUT_MS
+                        )
                     except Exception:
                         pass
                     await page.wait_for_timeout(800)
                     await _recover_to_commend(page, expected_page_text)
                     try:
-                        await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=8000)
+                        await call_with_timeout_retry(
+                            page.wait_for_selector, "等待列表卡片", VIDEO_CARD_SELECTOR, timeout=PW_TIMEOUT_MS
+                        )
                     except Exception:
                         print("[WARN] 返回后未找到卡片，尝试恢复到列表页")
                         await _recover_to_commend(page, expected_page_text)
@@ -309,7 +352,9 @@ async def perform_scan(
                     await page.bring_to_front()
                     await _recover_to_commend(page, expected_page_text)
                     try:
-                        await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=8000)
+                        await call_with_timeout_retry(
+                            page.wait_for_selector, "等待列表卡片", VIDEO_CARD_SELECTOR, timeout=PW_TIMEOUT_MS
+                        )
                     except Exception:
                         print("[WARN] 关闭标签后未找到卡片，尝试恢复到列表页")
                         await _recover_to_commend(page, expected_page_text)
@@ -358,7 +403,9 @@ async def perform_scan(
                     break
                 await target_btn.click()
                 await page.wait_for_timeout(1500)
-                await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=8000)
+                await call_with_timeout_retry(
+                    page.wait_for_selector, "等待列表卡片", VIDEO_CARD_SELECTOR, timeout=PW_TIMEOUT_MS
+                )
                 new_page_text = await _get_active_page_number(page)
                 if new_page_text != target_text:
                     print(f"[WARN] 翻页后页码为 {new_page_text}，期望 {target_text}，尝试恢复")
