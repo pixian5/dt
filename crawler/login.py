@@ -132,19 +132,19 @@ async def perform_login(
     username: str, password: str, open_only: bool, keep_open: bool, skip_login: bool = False
 ) -> None:
     async with async_playwright() as p:
-        reuse_browser = False
-        browser = None
         endpoint = os.getenv("PLAYWRIGHT_CDP_ENDPOINT", "http://127.0.0.1:9222")
         try:
             browser = await p.chromium.connect_over_cdp(endpoint)
-            reuse_browser = True
-            print(f"[INFO] 复用已启动的浏览器：{endpoint}")
-        except Exception:
-            browser = await p.chromium.launch(
-                headless=False,
-                args=["--remote-debugging-port=9222"],
-            )
-            print("[INFO] 启动新浏览器（启用 CDP 端口 9222 以便下次复用）")
+            print(f"[INFO] 已连接本机 Chrome（CDP）：{endpoint}")
+        except Exception as exc:
+            raise SystemExit(
+                "无法连接到本机 Chrome 的 CDP 端口："
+                f"{endpoint}\n"
+                "请先手动启动你的 Chrome 并开启远程调试端口，然后重试。\n"
+                "macOS 示例：\n"
+                "open -na \"Google Chrome\" --args --remote-debugging-port=9222 --user-data-dir=\"/tmp/chrome-cdp-9222\"\n"
+                "（如果你想用其它端口/地址，请设置环境变量 PLAYWRIGHT_CDP_ENDPOINT）"
+            ) from exc
 
         context = browser.contexts[0] if browser.contexts else await browser.new_context()
         context.set_default_timeout(PW_TIMEOUT_MS)
@@ -163,8 +163,6 @@ async def perform_login(
                 await page.close()
             except Exception:
                 pass
-            if not reuse_browser:
-                await browser.close()
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
