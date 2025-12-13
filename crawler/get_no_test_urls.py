@@ -304,7 +304,7 @@ async def perform_scan(
                     break
                 cards = page.locator(cards_selector)
 
-                print(f"[INFO] 点击第 {seq}/{total_unlearned} 个未学习卡片")
+                print(f"[INFO] 点击第 {seq}/{total_unlearned} 个未学习卡片——第{expected_page_text}页")
                 card = cards.nth(idx)
 
                 pages_before = list(page.context.pages)
