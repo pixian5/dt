@@ -18,10 +18,55 @@ from crawler.login import (
 URL_FILE = Path("url.txt")
 
 
-def _iter_urls_from_file(path: Path):
+def _parse_lines_range(lines_arg: str | None) -> tuple[int | None, int | None]:
+    if not lines_arg:
+        return None, None
+    s = str(lines_arg).strip()
+    if not s:
+        return None, None
+    if "-" not in s:
+        try:
+            n = int(s)
+        except Exception:
+            raise SystemExit(f"--lines 参数格式错误：{lines_arg!r}（示例：1 / 1- / 1-5）")
+        if n <= 0:
+            raise SystemExit(f"--lines 行号必须为正整数：{lines_arg!r}")
+        return n, n
+
+    start_s, end_s = [p.strip() for p in s.split("-", 1)]
+    if not start_s:
+        raise SystemExit(f"--lines 参数格式错误：{lines_arg!r}（示例：1- 或 1-5）")
+    try:
+        start = int(start_s)
+    except Exception:
+        raise SystemExit(f"--lines 参数格式错误：{lines_arg!r}（示例：1- 或 1-5）")
+    if start <= 0:
+        raise SystemExit(f"--lines 起始行号必须为正整数：{lines_arg!r}")
+
+    if end_s == "":
+        return start, None
+    try:
+        end = int(end_s)
+    except Exception:
+        raise SystemExit(f"--lines 参数格式错误：{lines_arg!r}（示例：1- 或 1-5）")
+    if end <= 0:
+        raise SystemExit(f"--lines 结束行号必须为正整数：{lines_arg!r}")
+    if end < start:
+        raise SystemExit(f"--lines 结束行号不能小于起始行号：{lines_arg!r}")
+    return start, end
+
+
+def _iter_urls_from_file(path: Path, *, lines_range: str | None = None):
     if not path.exists() or not path.is_file():
         raise SystemExit(f"找不到 URL 文件：{path}")
-    for raw in path.read_text(encoding="utf-8").splitlines():
+    all_lines = path.read_text(encoding="utf-8").splitlines()
+    start, end = _parse_lines_range(lines_range)
+    if start is not None:
+        start_idx = start - 1
+        end_idx = None if end is None else end
+        all_lines = all_lines[start_idx:end_idx]
+
+    for raw in all_lines:
         s = raw.strip()
         if not s:
             continue
@@ -166,6 +211,7 @@ async def perform_watch(
     open_only: bool,
     skip_login: bool,
     url_file: Path,
+    lines_range: str | None,
 ) -> None:
     async with async_playwright() as p:
         endpoint = os.getenv("PLAYWRIGHT_CDP_ENDPOINT", "http://127.0.0.1:9222")
@@ -181,7 +227,7 @@ async def perform_watch(
         if open_only and not skip_login:
             input("请在浏览器中完成手动登录后，按 Enter 继续：")
 
-        urls_iter = iter(_iter_urls_from_file(url_file))
+        urls_iter = iter(_iter_urls_from_file(url_file, lines_range=lines_range))
         first_url = next(urls_iter, None)
         if not first_url:
             print("[WARN] url.txt 中未找到任何 https URL，结束")
@@ -217,6 +263,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--open-only", action="store_true", help="仅打开登录页，不自动填写/提交")
     parser.add_argument("--skip-login", action="store_true", help="已手动登录时使用，跳过登录流程")
     parser.add_argument("--url-file", default=str(URL_FILE), help="URL 文件路径（默认 url.txt）")
+    parser.add_argument("--lines", default=None, help="读取的行范围：1 / 1- / 1-5（按 url.txt 行号）")
     return parser.parse_args(argv)
 
 
@@ -244,6 +291,7 @@ def main(argv: list[str] | None = None) -> None:
             open_only=open_only,
             skip_login=skip_login,
             url_file=Path(args.url_file),
+            lines_range=args.lines,
         )
     )
 
