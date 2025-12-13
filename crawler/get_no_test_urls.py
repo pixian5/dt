@@ -373,24 +373,44 @@ async def perform_scan(
                     break
                 print(f"[INFO] 尝试跳转到第 {target_text} 页")
                 target_btn = None
-                for _ in range(10):
+                while True:
                     numbers = await page.query_selector_all(".number")
+                    current_numbers_text: list[str] = []
                     for n in numbers:
                         txt = (await n.inner_text()).strip()
+                        current_numbers_text.append(txt)
                         if txt == target_text:
                             target_btn = n
                             break
+
                     if target_btn:
                         break
+
                     quick = await page.query_selector(".btn-quicknext")
                     if not quick:
+                        print(f"[INFO] 没找到页码{target_text}")
                         break
+
+                    quick_classes = (await quick.get_attribute("class")) or ""
+                    quick_disabled = ("disabled" in quick_classes) or ("is-disabled" in quick_classes)
+                    if quick_disabled:
+                        print(f"[INFO] 没找到页码{target_text}")
+                        break
+
                     print("[INFO] 点击 btn-quicknext 展开更多页码")
                     await quick.click()
                     await page.wait_for_timeout(800)
 
+                    numbers_after = await page.query_selector_all(".number")
+                    next_numbers_text: list[str] = []
+                    for n in numbers_after:
+                        next_numbers_text.append((await n.inner_text()).strip())
+
+                    if next_numbers_text == current_numbers_text:
+                        print(f"[INFO] 没找到页码{target_text}")
+                        break
+
                 if not target_btn:
-                    print(f"[INFO] 没找到页码{target_text}")
                     break
                 classes = (await target_btn.get_attribute("class")) or ""
                 disabled = "disabled" in classes or "is-disabled" in classes
