@@ -54,6 +54,13 @@ async def _wait_player_ready(page: Page) -> None:
     )
 
 
+async def _click_big_play_button(page: Page) -> None:
+    btn = page.locator(".vjs-big-play-button").first
+    if await btn.count() == 0:
+        return
+    await call_with_timeout_retry(btn.click, "点击大播放按钮", timeout=PW_TIMEOUT_MS)
+
+
 async def _click_first_speed_item(page: Page) -> None:
     items = page.locator(".vjs-menu-item-text")
     if await items.count() == 0:
@@ -66,15 +73,11 @@ async def _click_first_speed_item(page: Page) -> None:
     if await items.count() == 0:
         raise SystemExit("未找到 vjs-menu-item-text（倍速菜单项），无法设置 2x")
 
-    idx_2x: int | None = None
-    for i in range(await items.count()):
-        t = ((await items.nth(i).inner_text()) or "").strip()
-        if t == "2x":
-            idx_2x = i
-            break
-    if idx_2x is None:
-        raise SystemExit("未找到 2x 倍速菜单项（vjs-menu-item-text 文本不含 2x）")
-    target = items.nth(idx_2x)
+    first = items.nth(0)
+    t = ((await first.inner_text()) or "").strip()
+    if t != "2x":
+        raise SystemExit(f"倍速菜单第一项不是 2x，实际为：{t!r}")
+    target = first
     await call_with_timeout_retry(target.click, "设置倍速 2x", timeout=PW_TIMEOUT_MS)
 
 
@@ -95,7 +98,7 @@ async def _pause_then_resume(page: Page) -> None:
 
     if "vjs-playing" in cls:
         await call_with_timeout_retry(play.click, "暂停播放", timeout=PW_TIMEOUT_MS)
-        await page.wait_for_timeout(3000)
+        await page.wait_for_timeout(30000)
 
     cls2 = (
         await call_with_timeout_retry(play.get_attribute, "读取播放按钮class", "class", timeout=PW_TIMEOUT_MS)
@@ -135,6 +138,7 @@ async def _check_ended(page: Page) -> bool:
 async def _watch_single_url(page: Page, url: str) -> None:
     await call_with_timeout_retry(page.goto, "打开课程详情页", url, wait_until="domcontentloaded", timeout=PW_TIMEOUT_MS)
     await _wait_player_ready(page)
+    await _click_big_play_button(page)
     await _click_first_speed_item(page)
     await _ensure_playing(page)
 
@@ -142,11 +146,12 @@ async def _watch_single_url(page: Page, url: str) -> None:
 
     while True:
         now = asyncio.get_running_loop().time()
-        if now - last_pause >= 180:
+        if now - last_pause >= 60:
             await _pause_then_resume(page)
             last_pause = now
 
         if await _check_ended(page):
+            await call_with_timeout_retry(page.reload, "播放结束后刷新页面", wait_until="domcontentloaded", timeout=PW_TIMEOUT_MS)
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             print(f"【{url}已看完。{ts}】")
             return
@@ -167,15 +172,25 @@ async def perform_watch(
 
         context = browser.contexts[0] if browser.contexts else await browser.new_context()
         context.set_default_timeout(PW_TIMEOUT_MS)
-        page = await context.new_page()
+        login_page = await context.new_page()
 
-        await ensure_logged_in(page, username=username, password=password, open_only=open_only, skip_login=skip_login)
+        await ensure_logged_in(
+            login_page, username=username, password=password, open_only=open_only, skip_login=skip_login
+        )
         if open_only and not skip_login:
             input("请在浏览器中完成手动登录后，按 Enter 继续：")
 
+        prev_page: Page | None = login_page
         for url in _iter_urls_from_file(url_file):
             print(f"[INFO] 开始播放：{url}")
+            page = await context.new_page()
             await _watch_single_url(page, url)
+            if prev_page is not None and prev_page is not page:
+                try:
+                    await prev_page.close()
+                except Exception:
+                    pass
+            prev_page = page
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
