@@ -10,20 +10,6 @@ LOGIN_URL = "https://sso.dtdjzx.gov.cn/sso/login"
 INDEX_URL = "https://gbwlxy.dtdjzx.gov.cn/index"
 COMMEND_URL = "https://gbwlxy.dtdjzx.gov.cn/content#/commendIndex"
 
-RIGHT_WARP_SELECTOR = (
-    "#domhtml > div.app-wrapper.hideSidebar > div > section > div > div > "
-    "div.container-warp-index > div.right-warp > div"
-)
-# 使用更宽松的卡片选择器，避免层级变化导致无法获取
-VIDEO_CARD_SELECTOR = ".video-warp-start"
-STATE_SELECTOR = ".state-paused"
-DETAIL_SPAN_SELECTOR = (
-    "#domhtml > div.app-wrapper.hideSidebar.withoutAnimation > div > section > div > "
-    "div:nth-child(2) > div.MainVideo.el-row > div.top-right-warp > div > "
-    "div:nth-child(1) > div:nth-child(7) > div.titleContent > span"
-)
-URL_OUTPUT_FILE = Path("url.txt")
-
 
 def load_local_secrets() -> None:
     candidates = [Path("secrets.local.env"), Path(__file__).resolve().parents[1] / "secrets.local.env"]
@@ -44,137 +30,87 @@ def load_local_secrets() -> None:
             return
 
 
-async def _get_active_page_number(page: Page) -> str:
+
+async def _is_logged_in(page: Page) -> bool:
     try:
-        el = await page.wait_for_selector(".number.active", timeout=5000)
-        return (await el.inner_text()).strip()
-    except Exception:
-        return ""
-
-
-async def _append_url(url: str) -> None:
-    URL_OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with URL_OUTPUT_FILE.open("a", encoding="utf-8") as f:
-        f.write(url + "\n")
-
-
-async def _goto_page_number(page: Page, target_text: str) -> bool:
-    if not target_text:
-        return False
-    try:
-        numbers = await page.query_selector_all(".number")
-        for n in numbers:
-            txt = (await n.inner_text()).strip()
-            if txt == target_text:
-                await n.click()
-                await page.wait_for_timeout(800)
-                return True
-    except Exception:
-        return False
-
-    for _ in range(10):
-        try:
-            quick = await page.query_selector(".btn-quicknext")
-            if not quick:
-                return False
-            await quick.click()
-            await page.wait_for_timeout(300)
-            numbers = await page.query_selector_all(".number")
-            for n in numbers:
-                txt = (await n.inner_text()).strip()
-                if txt == target_text:
-                    await n.click()
-                    await page.wait_for_timeout(800)
-                    return True
-        except Exception:
+        await page.goto(COMMEND_URL, wait_until="networkidle", timeout=30000)
+        if "sso.dtdjzx.gov.cn" in page.url or "sso/login" in page.url:
             return False
-    return False
+        await page.wait_for_selector(".number.active", timeout=5000)
+        return "commendIndex" in page.url
+    except Exception:
+        return False
 
 
-async def _recover_to_commend(page: Page, expected_page_text: str) -> None:
-    if "/content#/commendIndex" not in page.url:
+async def ensure_logged_in(
+    page: Page, username: str, password: str, open_only: bool, skip_login: bool = False
+) -> None:
+    if skip_login:
+        print("[INFO] 跳过登录（--skip-login）")
+        return
+
+    if await _is_logged_in(page):
+        print("[INFO] 已检测到当前会话已登录，跳过登录流程")
+        return
+
+    print(f"[INFO] 未登录，打开登录页：{LOGIN_URL}")
+    await page.goto(LOGIN_URL, wait_until="load", timeout=30000)
+    await page.wait_for_timeout(1000)
+
+    auto_logged_in = False
+    if "dtdjzx.gov.cn/member" in page.url:
+        auto_logged_in = True
+        print("[INFO] 已检测到跳转 member，视为已登录，跳过输入验证码")
+    else:
         try:
-            await page.goto(COMMEND_URL, wait_until="networkidle")
-            await page.wait_for_timeout(800)
+            await page.wait_for_selector("#username", timeout=4000)
+            await page.wait_for_selector("#password", timeout=4000)
+            await page.wait_for_selector("#validateCode", timeout=4000)
         except Exception:
-            return
-    if expected_page_text:
-        current = await _get_active_page_number(page)
-        if current != expected_page_text:
-            await _goto_page_number(page, expected_page_text)
-            await page.wait_for_timeout(500)
+            if "dtdjzx.gov.cn/member" in page.url:
+                auto_logged_in = True
+                print("[INFO] 已检测到跳转 member，视为已登录，跳过输入验证码")
+            else:
+                raise
 
+    if not auto_logged_in and not open_only:
+        await page.fill("#username", username)
+        await page.fill("#password", password)
 
-async def _wait_detail_yes_no(page: Page) -> str:
+        captcha = input("请输入验证码（validateCode）：").strip()
+        if not captcha:
+            raise SystemExit("验证码不能为空")
+        await page.fill("#validateCode", captcha)
+
+        await page.wait_for_selector("a.js-submit.tianze-loginbtn", timeout=4000)
+        await page.click("a.js-submit.tianze-loginbtn")
+        await page.wait_for_timeout(3000)
+
     try:
-        await page.wait_for_selector("div.titleContent > span", timeout=15000, state="visible")
-        await page.wait_for_function(
-            """() => {
-                const el = document.querySelector('div.titleContent > span');
-                if (!el) return false;
-                const t = (el.innerText || '').trim();
-                return t === '是' || t === '否';
-            }""",
-            timeout=15000,
-        )
-        el = await page.query_selector("div.titleContent > span")
-        if not el:
-            return ""
-        return ((await el.inner_text()) or "").strip()
-    except Exception:
-        return ""
-
-
-async def _get_next_page_target(current_text: str) -> str | None:
-    try:
-        num = int(current_text)
-        return str(num + 1)
-    except Exception:
-        return None
-
-
-def _parse_page_range(page_arg: str | None) -> tuple[int | None, int | None]:
-    if not page_arg:
-        return None, None
-    s = str(page_arg).strip()
-    if not s:
-        return None, None
-    if "-" not in s:
+        print(f"[INFO] 跳转到首页：{INDEX_URL}")
+        await page.goto(INDEX_URL, wait_until="networkidle", timeout=30000)
+        await page.wait_for_timeout(2000)
         try:
-            start = int(s)
-            return (start if start > 0 else None), None
+            login_btn = await page.query_selector("text=用户登录")
+            if login_btn:
+                print("[INFO] 检测到【用户登录】按钮，点击登录")
+                await login_btn.click()
+                await page.wait_for_timeout(2000)
         except Exception:
-            return None, None
-    parts = [p.strip() for p in s.split("-", 1)]
-    if len(parts) != 2:
-        return None, None
-    try:
-        start = int(parts[0])
-        end = int(parts[1])
+            pass
+        print(f"[INFO] 跳转到列表页：{COMMEND_URL}")
+        await page.goto(COMMEND_URL, wait_until="networkidle", timeout=30000)
+        await page.wait_for_timeout(1500)
     except Exception:
-        return None, None
-    if start <= 0 or end <= 0:
-        return None, None
-    if end < start:
-        start, end = end, start
-    return start, end
+        return
 
 
 async def perform_login(
-    username: str,
-    password: str,
-    open_only: bool,
-    keep_open: bool,
-    skip_login: bool = False,
-    start_page: int | None = None,
-    end_page: int | None = None,
+    username: str, password: str, open_only: bool, keep_open: bool, skip_login: bool = False
 ) -> None:
-    data_dir = Path("data")
-    data_dir.mkdir(parents=True, exist_ok=True)
     async with async_playwright() as p:
         reuse_browser = False
         browser = None
-        page = None
         endpoint = os.getenv("PLAYWRIGHT_CDP_ENDPOINT", "http://127.0.0.1:9222")
         try:
             browser = await p.chromium.connect_over_cdp(endpoint)
@@ -190,263 +126,10 @@ async def perform_login(
         context = browser.contexts[0] if browser.contexts else await browser.new_context()
         context.set_default_timeout(4000)
         page = await context.new_page()
-        if skip_login:
-            print("[INFO] 跳过登录，直接进行后续操作")
-        else:
-            print(f"[INFO] 打开登录页：{LOGIN_URL}")
-            await page.goto(LOGIN_URL, wait_until="load", timeout=10000)
-            await page.wait_for_timeout(1000)
-
-            auto_logged_in = False
-            if "dtdjzx.gov.cn/member" in page.url:
-                auto_logged_in = True
-                print("[INFO] 已检测到跳转 member，视为已登录，跳过输入验证码")
-            else:
-                try:
-                    await page.wait_for_selector("#username", timeout=4000)
-                    await page.wait_for_selector("#password", timeout=4000)
-                    await page.wait_for_selector("#validateCode", timeout=4000)
-                except Exception:
-                    if "dtdjzx.gov.cn/member" in page.url:
-                        auto_logged_in = True
-                        print("[INFO] 已检测到跳转 member，视为已登录，跳过输入验证码")
-                    else:
-                        raise
-
-            if not auto_logged_in and not open_only:
-                await page.fill("#username", username)
-                await page.fill("#password", password)
-
-                captcha = input("请输入验证码（validateCode）：").strip()
-                if not captcha:
-                    raise SystemExit("验证码不能为空")
-                await page.fill("#validateCode", captcha)
-
-                await page.wait_for_selector("a.js-submit.tianze-loginbtn", timeout=4000)
-                await page.click("a.js-submit.tianze-loginbtn")
-                await page.wait_for_timeout(3000)
-
-        # 跳转到 index，检查【用户登录】按钮并点击（如有），再跳转 commendIndex，记录当前页码
-        try:
-            print(f"[INFO] 跳转到首页：{INDEX_URL}")
-            await page.goto(INDEX_URL, wait_until="networkidle", timeout=30000)
-            await page.wait_for_timeout(2000)
-            # 检查是否有【用户登录】按钮，如有则点击
-            try:
-                login_btn = await page.query_selector("text=用户登录")
-                if login_btn:
-                    print("[INFO] 检测到【用户登录】按钮，点击登录")
-                    await login_btn.click()
-                    await page.wait_for_timeout(2000)
-            except Exception:
-                pass
-            print(f"[INFO] 跳转到列表页：{COMMEND_URL}")
-            await page.goto(COMMEND_URL, wait_until="networkidle", timeout=30000)
-            await page.wait_for_timeout(2000)
-            page_num = await _get_active_page_number(page)
-            print(f"[INFO] 当前页码：{page_num}")
-            if not page_num:
-                print("[WARN] 未能读取页码，可能页面未完全加载，等待后重试")
-                await page.wait_for_timeout(3000)
-                page_num = await _get_active_page_number(page)
-                print(f"[INFO] 重试后页码：{page_num}")
-
-            if start_page is not None and start_page > 0:
-                target_page_text = str(start_page)
-                if page_num and page_num != target_page_text:
-                    if end_page is not None and end_page > 0:
-                        print(
-                            f"[INFO] 扫描范围：{start_page}-{end_page}，跳转到第 {target_page_text} 页开始"
-                        )
-                    else:
-                        print(f"[INFO] 从指定页码开始扫描：跳转到第 {target_page_text} 页")
-                    await _goto_page_number(page, target_page_text)
-                    await page.wait_for_timeout(800)
-                    page_num = await _get_active_page_number(page)
-                    print(f"[INFO] 跳转后当前页码：{page_num}")
-        except Exception as exc:  # pylint: disable=broad-except
-            print(f"[WARN] 目标页操作失败：{exc}")
-
-        # 遍历分页
-        while True:
-            current_page_text = await _get_active_page_number(page)
-            print(f"[INFO] ========== 开始处理第 {current_page_text} 页 ==========")
-            await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=8000)
-            # 用 JS 一次性获取所有未学习卡片的索引
-            unlearned_indices = await page.evaluate(
-                """([cardSel, stateSel]) => {
-                    const cards = Array.from(document.querySelectorAll(cardSel));
-                    const result = [];
-                    cards.forEach((c, idx) => {
-                        const s = c.querySelector(stateSel);
-                        const t = s ? (s.innerText || '').trim() : '';
-                        if (t === '未学习') result.push(idx);
-                    });
-                    return result;
-                }""",
-                [VIDEO_CARD_SELECTOR, STATE_SELECTOR],
-            )
-            print(f"[INFO] 当前页未学习卡片索引：{unlearned_indices}")
-            processed_count = 0
-            no_test_url_count = 0
-            total_unlearned = len(unlearned_indices)
-            for seq, idx in enumerate(unlearned_indices, start=1):
-                # 每次点击前重新确认在列表页
-                if "commendIndex" not in page.url:
-                    await _recover_to_commend(page, current_page_text)
-                    await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=8000)
-                print(f"[INFO] 点击第 {seq}/{total_unlearned} 个未学习卡片")
-                expected_page_text = current_page_text
-                # JS 直接点击以避免可见性/覆盖问题
-                pages_before = list(page.context.pages)
-                try:
-                    click_ok = await page.evaluate(
-                        """([sel, n]) => {
-                            const els = document.querySelectorAll(sel);
-                            const el = els[n];
-                            if (!el) return false;
-                            el.scrollIntoView({behavior:'instant', block:'center'});
-                            const img = el.querySelector('img');
-                            (img || el).click();
-                            return true;
-                        }""",
-                        [VIDEO_CARD_SELECTOR, idx],
-                    )
-                    if not click_ok:
-                        print(f"[WARN] 卡片 {idx+1} 未找到，跳过")
-                        continue
-                except Exception:
-                    print(f"[WARN] 卡片 {idx+1} 点击失败，跳过")
-                    continue
-                await page.wait_for_timeout(1000)
-                pages_after = list(page.context.pages)
-                new_pages = [pg for pg in pages_after if pg not in pages_before]
-                target_page = new_pages[-1] if new_pages else page
-
-                if target_page is page:
-                    try:
-                        await page.wait_for_function(
-                            "() => location.href.includes('commend/coursedetail') || location.href.includes('/index') || location.href.includes('commendIndex')",
-                            timeout=5000,
-                        )
-                    except Exception:
-                        pass
-                    if "coursedetail" not in page.url:
-                        await _recover_to_commend(page, expected_page_text)
-                        await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=8000)
-                        continue
-                else:
-                    try:
-                        await target_page.bring_to_front()
-                    except Exception:
-                        pass
-                    await target_page.wait_for_timeout(500)
-                    if "coursedetail" not in target_page.url:
-                        try:
-                            await target_page.close()
-                        except Exception:
-                            pass
-                        await _recover_to_commend(page, expected_page_text)
-                        await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=8000)
-                        continue
-
-                detail_url = target_page.url
-                text = await _wait_detail_yes_no(target_page)
-                if text:
-                    print(f"[INFO] 详情页文本：{text}，URL：{detail_url}")
-                    if text == "否":
-                        await _append_url(detail_url)
-                        no_test_url_count += 1
-                        print(f"[INFO] 已记录：{detail_url}")
-                    elif text == "是":
-                        print('[INFO] 详情页为"是"，直接返回')
-                else:
-                    print(f"[WARN] 详情页未读取到是/否，URL：{detail_url}")
-                processed_count += 1
-                # 返回上一页或关闭新标签
-                if target_page is page:
-                    try:
-                        await page.go_back(wait_until="networkidle", timeout=15000)
-                    except Exception:
-                        pass
-                    await page.wait_for_timeout(800)
-                    await _recover_to_commend(page, expected_page_text)
-                    try:
-                        await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=8000)
-                    except Exception:
-                        print("[WARN] 返回后未找到卡片，尝试恢复到列表页")
-                        await _recover_to_commend(page, expected_page_text)
-                        await page.wait_for_timeout(1000)
-                else:
-                    try:
-                        await target_page.close()
-                    except Exception:
-                        pass
-                    await page.bring_to_front()
-                    await _recover_to_commend(page, expected_page_text)
-                    try:
-                        await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=8000)
-                    except Exception:
-                        print("[WARN] 关闭标签后未找到卡片，尝试恢复到列表页")
-                        await _recover_to_commend(page, expected_page_text)
-                        await page.wait_for_timeout(1000)
-            print(
-                f"[INFO] 本页处理完成，共处理 {processed_count} 个未学习卡片，无随堂测验url数：{no_test_url_count}"
-            )
-
-            if end_page is not None and end_page > 0 and current_page_text == str(end_page):
-                print(f"[INFO] 已到达末页 {end_page}，停止扫描")
-                break
-
-            # 尝试下一页
-            try:
-                target_text = await _get_next_page_target(current_page_text)
-                if not target_text:
-                    print("[INFO] 没有下一页目标，结束遍历")
-                    break
-                print(f"[INFO] 尝试跳转到第 {target_text} 页")
-                numbers = await page.query_selector_all(".number")
-                target_btn = None
-                for n in numbers:
-                    txt = (await n.inner_text()).strip()
-                    if txt == target_text:
-                        target_btn = n
-                        break
-                if not target_btn:
-                    quick = await page.query_selector(".btn-quicknext")
-                    if quick:
-                        print("[INFO] 点击 btn-quicknext 展开更多页码")
-                        await quick.click()
-                        await page.wait_for_timeout(800)
-                        numbers = await page.query_selector_all(".number")
-                        for n in numbers:
-                            txt = (await n.inner_text()).strip()
-                            if txt == target_text:
-                                target_btn = n
-                                break
-                if not target_btn:
-                    print(f"[WARN] 未找到第 {target_text} 页按钮，结束遍历")
-                    break
-                classes = (await target_btn.get_attribute("class")) or ""
-                disabled = "disabled" in classes or "is-disabled" in classes
-                if disabled:
-                    print(f"[INFO] 第 {target_text} 页按钮已禁用，结束遍历")
-                    break
-                await target_btn.click()
-                await page.wait_for_timeout(1500)
-                await page.wait_for_selector(VIDEO_CARD_SELECTOR, timeout=8000)
-                # 验证是否真的翻到了目标页
-                new_page_text = await _get_active_page_number(page)
-                if new_page_text != target_text:
-                    print(f"[WARN] 翻页后页码为 {new_page_text}，期望 {target_text}，尝试恢复")
-                    await _goto_page_number(page, target_text)
-                    await page.wait_for_timeout(800)
-            except Exception as exc:
-                print(f"[WARN] 翻页失败：{exc}")
-                break
+        await ensure_logged_in(page, username=username, password=password, open_only=open_only, skip_login=skip_login)
 
         if keep_open:
-            print("[INFO] 扫描完成！浏览器已打开。按 Ctrl+C 退出并关闭浏览器。")
+            print("[INFO] 登录完成！浏览器已打开。按 Ctrl+C 退出并关闭浏览器。")
             try:
                 while True:
                     await asyncio.sleep(3600)
@@ -462,7 +145,7 @@ async def perform_login(
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="使用 Playwright 执行登录并保存截图（始终可视化模式）")
+    parser = argparse.ArgumentParser(description="使用 Playwright 执行登录（始终可视化模式）")
     parser.add_argument("--username", default=None, help="登录用户名")
     parser.add_argument("--password", default=None, help="登录密码")
     parser.add_argument("--open-only", action="store_true", help="仅打开登录页，不自动填写/提交")
@@ -472,31 +155,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--skip-login", action="store_true", help="已手动登录时使用，跳过登录流程，直接执行后续跳转与点击"
     )
-    parser.add_argument("--page", type=str, default=None, help='扫描页码："起始页" 或 "起始页-末页"（例如 23 或 23-30）')
-    parser.add_argument("--start-page", type=int, default=None, help="（兼容参数，已废弃）等价于 --page 起始页")
     return parser.parse_args(argv)
 
 
 def login_flow(
-    username: str,
-    password: str,
-    open_only: bool,
-    keep_open: bool,
-    skip_login: bool,
-    start_page: int | None,
-    end_page: int | None,
+    username: str, password: str, open_only: bool, keep_open: bool, skip_login: bool
 ) -> None:
-    asyncio.run(
-        perform_login(
-            username,
-            password,
-            open_only=open_only,
-            keep_open=keep_open,
-            skip_login=skip_login,
-            start_page=start_page,
-            end_page=end_page,
-        )
-    )
+    asyncio.run(perform_login(username, password, open_only=open_only, keep_open=keep_open, skip_login=skip_login))
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -505,10 +170,6 @@ def main(argv: list[str] | None = None) -> None:
     open_only = bool(args.open_only)
     keep_open = (not bool(args.close_after)) or open_only
     skip_login = bool(args.skip_login)
-    page_arg = args.page
-    if not page_arg and args.start_page is not None:
-        page_arg = str(args.start_page)
-    start_page, end_page = _parse_page_range(page_arg)
 
     username = args.username or os.getenv("DT_CRAWLER_USERNAME") or ""
     password = args.password or os.getenv("DT_CRAWLER_PASSWORD") or ""
@@ -518,15 +179,7 @@ def main(argv: list[str] | None = None) -> None:
                 "缺少登录信息：请通过参数 --username/--password，或环境变量 DT_CRAWLER_USERNAME/DT_CRAWLER_PASSWORD，"
                 "或在项目根目录创建 secrets.local.env 提供"
             )
-    login_flow(
-        username,
-        password,
-        open_only=open_only,
-        keep_open=keep_open,
-        skip_login=skip_login,
-        start_page=start_page,
-        end_page=end_page,
-    )
+    login_flow(username, password, open_only=open_only, keep_open=keep_open, skip_login=skip_login)
 
 
 if __name__ == "__main__":
