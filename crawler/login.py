@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -12,6 +13,7 @@ INDEX_URL = "https://gbwlxy.dtdjzx.gov.cn/index"
 COMMEND_URL = "https://gbwlxy.dtdjzx.gov.cn/content#/commendIndex"
 
 PW_TIMEOUT_MS = 4000
+DEFAULT_STATE_FILE = Path("storage_state.json")
 
 
 async def connect_chrome_over_cdp(p, endpoint: str):
@@ -106,6 +108,55 @@ def load_local_secrets() -> None:
             return
 
 
+async def _apply_storage_state_to_context(context, state_file: Path) -> bool:
+    try:
+        raw = state_file.read_text(encoding="utf-8")
+        state = json.loads(raw)
+    except Exception:
+        return False
+
+    cookies = state.get("cookies") or []
+    if cookies:
+        try:
+            await context.add_cookies(cookies)
+        except Exception:
+            pass
+
+    origins = state.get("origins") or []
+    for origin_entry in origins:
+        origin = (origin_entry or {}).get("origin")
+        items = (origin_entry or {}).get("localStorage") or []
+        if not origin or not items:
+            continue
+        try:
+            p = await context.new_page()
+            try:
+                await call_with_timeout_retry(p.goto, "加载登录态：打开origin", origin, wait_until="domcontentloaded")
+                await p.evaluate(
+                    """(items) => {
+                        for (const it of items) {
+                            if (!it || !it.name) continue;
+                            try { localStorage.setItem(it.name, it.value ?? ''); } catch (e) {}
+                        }
+                    }""",
+                    items,
+                )
+            finally:
+                await p.close()
+        except Exception:
+            continue
+
+    return True
+
+
+async def _save_storage_state(context, state_file: Path) -> None:
+    try:
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    await context.storage_state(path=str(state_file))
+
+
 
 async def _is_logged_in(page: Page) -> bool:
     try:
@@ -178,7 +229,14 @@ async def ensure_logged_in(
 
 
 async def perform_login(
-    username: str, password: str, open_only: bool, keep_open: bool, skip_login: bool = False
+    username: str,
+    password: str,
+    open_only: bool,
+    keep_open: bool,
+    skip_login: bool = False,
+    state_file: Path = DEFAULT_STATE_FILE,
+    load_state: bool = True,
+    save_state: bool = True,
 ) -> None:
     async with async_playwright() as p:
         endpoint = os.getenv("PLAYWRIGHT_CDP_ENDPOINT", "http://127.0.0.1:9222")
@@ -186,8 +244,20 @@ async def perform_login(
 
         context = browser.contexts[0] if browser.contexts else await browser.new_context()
         context.set_default_timeout(PW_TIMEOUT_MS)
+
+        if load_state and state_file.exists() and state_file.is_file():
+            if await _apply_storage_state_to_context(context, state_file):
+                print(f"[INFO] 已从本地加载登录态：{state_file}")
+
         page = await context.new_page()
         await ensure_logged_in(page, username=username, password=password, open_only=open_only, skip_login=skip_login)
+
+        if save_state:
+            try:
+                await _save_storage_state(context, state_file)
+                print(f"[INFO] 已保存登录态：{state_file}")
+            except Exception as exc:
+                print(f"[WARN] 保存登录态失败：{exc}")
 
         return
 
@@ -203,13 +273,28 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--skip-login", action="store_true", help="已手动登录时使用，跳过登录流程，直接执行后续跳转与点击"
     )
+    parser.add_argument("--state-file", default=str(DEFAULT_STATE_FILE), help="登录态保存文件（storage_state）")
+    parser.add_argument("--no-load-state", action="store_true", help="不从本地文件加载登录态")
+    parser.add_argument("--no-save-state", action="store_true", help="不保存登录态到本地文件")
     return parser.parse_args(argv)
 
 
 def login_flow(
     username: str, password: str, open_only: bool, keep_open: bool, skip_login: bool
 ) -> None:
-    asyncio.run(perform_login(username, password, open_only=open_only, keep_open=keep_open, skip_login=skip_login))
+    state_file = Path(os.getenv("DT_STORAGE_STATE_FILE", str(DEFAULT_STATE_FILE)))
+    asyncio.run(
+        perform_login(
+            username,
+            password,
+            open_only=open_only,
+            keep_open=keep_open,
+            skip_login=skip_login,
+            state_file=state_file,
+            load_state=True,
+            save_state=True,
+        )
+    )
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -227,7 +312,21 @@ def main(argv: list[str] | None = None) -> None:
                 "缺少登录信息：请通过参数 --username/--password，或环境变量 DT_CRAWLER_USERNAME/DT_CRAWLER_PASSWORD，"
                 "或在项目根目录创建 secrets.local.env 提供"
             )
-    login_flow(username, password, open_only=open_only, keep_open=keep_open, skip_login=skip_login)
+    state_file = Path(str(args.state_file))
+    load_state = not bool(args.no_load_state)
+    save_state = not bool(args.no_save_state)
+    asyncio.run(
+        perform_login(
+            username,
+            password,
+            open_only=open_only,
+            keep_open=keep_open,
+            skip_login=skip_login,
+            state_file=state_file,
+            load_state=load_state,
+            save_state=save_state,
+        )
+    )
 
 
 if __name__ == "__main__":
