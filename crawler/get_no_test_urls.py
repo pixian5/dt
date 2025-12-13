@@ -361,7 +361,10 @@ async def perform_scan(
                         await page.wait_for_timeout(1000)
 
             print(
-                f"[INFO] 本页处理完成，共处理 {processed_count} 个未学习卡片，无随堂测验url数：{no_test_url_count}"
+                f"[INFO] 第【{current_page_text}】页 {processed_count} 个未学习卡片处理完成，无随堂测验url数：{no_test_url_count}"
+            )
+            await _append_url(
+                f"【{current_page_text}】页 {processed_count} 个未学习卡片处理完成，无随堂测验url数：{no_test_url_count}"
             )
 
             if end_page is not None and end_page > 0 and current_page_text == str(end_page):
