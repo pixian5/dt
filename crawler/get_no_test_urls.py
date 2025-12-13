@@ -60,6 +60,51 @@ async def _get_user_login_reference_text(page: Page) -> str:
         return ""
 
 
+async def _wait_for_cards_selector(page: Page, expected_page_text: str) -> str | None:
+    primary = f"{CARD_CONTAINER_SELECTOR} {VIDEO_CARD_SELECTOR}"
+    fallback = VIDEO_CARD_SELECTOR
+
+    async def _poll() -> str | None:
+        for _ in range(10):
+            try:
+                if await page.locator(primary).count():
+                    return primary
+            except Exception:
+                pass
+            try:
+                if await page.locator(fallback).count():
+                    return fallback
+            except Exception:
+                pass
+            await page.wait_for_timeout(500)
+        return None
+
+    await _recover_to_commend(page, expected_page_text)
+    sel = await _poll()
+    if sel:
+        if sel == fallback:
+            print("[WARN] 未匹配到指定容器路径，已降级使用全局卡片选择器")
+        return sel
+
+    print("[WARN] 等待列表卡片超时，尝试刷新/重进列表页后重试 1 次")
+    try:
+        await call_with_timeout_retry(page.reload, "刷新列表页", wait_until="domcontentloaded", timeout=PW_TIMEOUT_MS)
+    except Exception:
+        try:
+            await call_with_timeout_retry(
+                page.goto, "重进列表页", COMMEND_URL, wait_until="domcontentloaded", timeout=PW_TIMEOUT_MS
+            )
+        except Exception:
+            return None
+
+    await page.wait_for_timeout(800)
+    await _recover_to_commend(page, expected_page_text)
+    sel = await _poll()
+    if sel == fallback:
+        print("[WARN] 未匹配到指定容器路径，已降级使用全局卡片选择器")
+    return sel
+
+
 async def _goto_page_number(page: Page, target_text: str) -> bool:
     if not target_text:
         return False
@@ -227,26 +272,20 @@ async def perform_scan(
         while True:
             current_page_text = await _get_active_page_number(page)
             print(f"[INFO] ========== 开始处理第 {current_page_text} 页 ==========")
-            try:
-                await call_with_timeout_retry(
-                    page.wait_for_selector,
-                    "等待列表卡片",
-                    f"{CARD_CONTAINER_SELECTOR} {VIDEO_CARD_SELECTOR}",
-                    timeout=PW_TIMEOUT_MS,
-                    state="attached",
-                )
-            except PlaywrightTimeoutError:
-                print("[WARN] 等待列表卡片超时，尝试恢复到列表页后重试 1 次")
-                await _recover_to_commend(page, current_page_text)
-                await call_with_timeout_retry(
-                    page.wait_for_selector,
-                    "等待列表卡片",
-                    f"{CARD_CONTAINER_SELECTOR} {VIDEO_CARD_SELECTOR}",
-                    timeout=PW_TIMEOUT_MS,
-                    state="attached",
-                )
+            cards_selector = await _wait_for_cards_selector(page, current_page_text)
+            if not cards_selector:
+                print(f"[WARN] 第 {current_page_text} 页未加载到卡片，跳过本页")
+                if end_page is not None and end_page > 0 and current_page_text == str(end_page):
+                    break
+                target_text = await _get_next_page_target(current_page_text)
+                if not target_text:
+                    break
+                print(f"[INFO] 尝试跳转到第 {target_text} 页")
+                await _goto_page_number(page, target_text)
+                await page.wait_for_timeout(800)
+                continue
 
-            cards = page.locator(f"{CARD_CONTAINER_SELECTOR} {VIDEO_CARD_SELECTOR}")
+            cards = page.locator(cards_selector)
             card_count = await cards.count()
             unlearned_indices: list[int] = []
             for i in range(card_count):
@@ -270,13 +309,11 @@ async def perform_scan(
             for seq, idx in enumerate(unlearned_indices, start=1):
                 expected_page_text = current_page_text
                 await _recover_to_commend(page, expected_page_text)
-                await call_with_timeout_retry(
-                    page.wait_for_selector,
-                    "等待列表卡片",
-                    f"{CARD_CONTAINER_SELECTOR} {VIDEO_CARD_SELECTOR}",
-                    timeout=PW_TIMEOUT_MS,
-                    state="attached",
-                )
+                cards_selector = await _wait_for_cards_selector(page, expected_page_text)
+                if not cards_selector:
+                    print(f"[WARN] 第 {expected_page_text} 页未加载到卡片，终止本页遍历")
+                    break
+                cards = page.locator(cards_selector)
 
                 print(f"[INFO] 点击第 {seq}/{total_unlearned} 个未学习卡片")
                 card = cards.nth(idx)
