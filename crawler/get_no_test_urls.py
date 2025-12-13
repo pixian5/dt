@@ -15,7 +15,7 @@ URL_OUTPUT_FILE = Path("url.txt")
 
 USER_LOGIN_REF_SELECTOR = ".el-popover__reference"
 
-PW_TIMEOUT_MS = 5000
+PW_TIMEOUT_MS = 4000
 
 
 async def call_with_timeout_retry(func, action: str, /, *args, **kwargs):
@@ -28,15 +28,18 @@ async def call_with_timeout_retry(func, action: str, /, *args, **kwargs):
         return await func(*args, **kwargs)
     except PlaywrightTimeoutError:
         print(f"[WARN] {action} 超时 {PW_TIMEOUT_MS}ms，重试 1 次")
-        return await func(*args, **kwargs)
+        try:
+            return await func(*args, **kwargs)
+        except PlaywrightTimeoutError as exc:
+            raise SystemExit(f"{action} 超时 {PW_TIMEOUT_MS}ms，重试仍失败：{exc}") from exc
 
 
 async def _get_active_page_number(page: Page) -> str:
-    try:
-        el = await call_with_timeout_retry(page.wait_for_selector, "获取当前页码", ".number.active", timeout=PW_TIMEOUT_MS)
-        return (await el.inner_text()).strip()
-    except Exception:
-        return ""
+    el = await call_with_timeout_retry(page.wait_for_selector, "获取当前页码", ".number.active", timeout=PW_TIMEOUT_MS)
+    txt = ((await el.inner_text()) or "").strip()
+    if not txt:
+        raise SystemExit("获取当前页码失败：.number.active 文本为空")
+    return txt
 
 
 async def _append_url(url: str) -> None:
@@ -62,7 +65,7 @@ async def _wait_for_cards_selector(page: Page, expected_page_text: str) -> str |
     sel = VIDEO_CARD_SELECTOR
 
     async def _poll() -> str | None:
-        for _ in range(10):
+        for _ in range(8):
             try:
                 if await page.locator(sel).count():
                     return sel
@@ -80,16 +83,16 @@ async def _wait_for_cards_selector(page: Page, expected_page_text: str) -> str |
     try:
         await call_with_timeout_retry(page.reload, "刷新列表页", wait_until="domcontentloaded", timeout=PW_TIMEOUT_MS)
     except Exception:
-        try:
-            await call_with_timeout_retry(
-                page.goto, "重进列表页", COMMEND_URL, wait_until="domcontentloaded", timeout=PW_TIMEOUT_MS
-            )
-        except Exception:
-            return None
+        await call_with_timeout_retry(
+            page.goto, "重进列表页", COMMEND_URL, wait_until="domcontentloaded", timeout=PW_TIMEOUT_MS
+        )
 
     await page.wait_for_timeout(800)
     await _recover_to_commend(page, expected_page_text)
-    return await _poll()
+    found = await _poll()
+    if not found:
+        raise SystemExit(f"列表页卡片加载失败：等待 {sel} 超时 {PW_TIMEOUT_MS}ms，重试仍失败")
+    return found
 
 
 async def _goto_page_number(page: Page, target_text: str) -> bool:
@@ -142,31 +145,30 @@ async def _recover_to_commend(page: Page, expected_page_text: str) -> None:
 
 
 async def _wait_detail_yes_no(page: Page) -> str:
-    try:
-        await call_with_timeout_retry(
-            page.wait_for_selector,
-            "详情页等待是/否",
-            "div.titleContent > span",
-            timeout=PW_TIMEOUT_MS,
-            state="visible",
-        )
-        await call_with_timeout_retry(
-            page.wait_for_function,
-            "详情页等待是/否脚本",
-            """() => {
-                const el = document.querySelector('div.titleContent > span');
-                if (!el) return false;
-                const t = (el.innerText || '').trim();
-                return t === '是' || t === '否';
-            }""",
-            timeout=PW_TIMEOUT_MS,
-        )
-        el = await page.query_selector("div.titleContent > span")
-        if not el:
-            return ""
-        return ((await el.inner_text()) or "").strip()
-    except Exception:
-        return ""
+    await call_with_timeout_retry(
+        page.wait_for_selector,
+        "详情页等待是/否",
+        "div.titleContent > span",
+        timeout=PW_TIMEOUT_MS,
+        state="visible",
+    )
+    await call_with_timeout_retry(
+        page.wait_for_function,
+        "详情页等待是/否脚本",
+        """() => {
+            const el = document.querySelector('div.titleContent > span');
+            if (!el) return false;
+            const t = (el.innerText || '').trim();
+            return t === '是' || t === '否';
+        }""",
+        timeout=PW_TIMEOUT_MS,
+    )
+    el = await page.query_selector("div.titleContent > span")
+    text = ((await el.inner_text()) if el else "") or ""
+    text = text.strip()
+    if text not in {"是", "否"}:
+        raise SystemExit(f"详情页读取是/否失败：URL={page.url}，读取到文本={text!r}")
+    return text
 
 
 async def _get_next_page_target(current_text: str) -> str | None:

@@ -11,7 +11,7 @@ LOGIN_URL = "https://sso.dtdjzx.gov.cn/sso/login"
 INDEX_URL = "https://gbwlxy.dtdjzx.gov.cn/index"
 COMMEND_URL = "https://gbwlxy.dtdjzx.gov.cn/content#/commendIndex"
 
-PW_TIMEOUT_MS = 5000
+PW_TIMEOUT_MS = 4000
 
 
 async def connect_chrome_over_cdp(p, endpoint: str):
@@ -68,7 +68,10 @@ async def call_with_timeout_retry(func, action: str, /, *args, **kwargs):
         return await func(*args, **kwargs)
     except PlaywrightTimeoutError:
         print(f"[WARN] {action} 超时 {PW_TIMEOUT_MS}ms，重试 1 次")
-        return await func(*args, **kwargs)
+        try:
+            return await func(*args, **kwargs)
+        except PlaywrightTimeoutError as exc:
+            raise SystemExit(f"{action} 超时 {PW_TIMEOUT_MS}ms，重试仍失败：{exc}") from exc
 
 
 async def _get_user_login_reference_text(page: Page) -> str:
