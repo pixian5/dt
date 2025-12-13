@@ -13,9 +13,6 @@ STATE_SELECTOR = ".state-paused"
 URL_OUTPUT_FILE = Path("url.txt")
 
 USER_LOGIN_REF_SELECTOR = ".el-popover__reference"
-CARD_CONTAINER_SELECTOR = (
-    "#domhtml > div.app-wrapper.hideSidebar > div > section > div > div > div.container-warp-index > div.right-warp > div"
-)
 
 PW_TIMEOUT_MS = 5000
 
@@ -61,30 +58,22 @@ async def _get_user_login_reference_text(page: Page) -> str:
 
 
 async def _wait_for_cards_selector(page: Page, expected_page_text: str) -> str | None:
-    primary = f"{CARD_CONTAINER_SELECTOR} {VIDEO_CARD_SELECTOR}"
-    fallback = VIDEO_CARD_SELECTOR
+    sel = VIDEO_CARD_SELECTOR
 
     async def _poll() -> str | None:
         for _ in range(10):
             try:
-                if await page.locator(primary).count():
-                    return primary
-            except Exception:
-                pass
-            try:
-                if await page.locator(fallback).count():
-                    return fallback
+                if await page.locator(sel).count():
+                    return sel
             except Exception:
                 pass
             await page.wait_for_timeout(500)
         return None
 
     await _recover_to_commend(page, expected_page_text)
-    sel = await _poll()
-    if sel:
-        if sel == fallback:
-            print("[WARN] 未匹配到指定容器路径，已降级使用全局卡片选择器")
-        return sel
+    found = await _poll()
+    if found:
+        return found
 
     print("[WARN] 等待列表卡片超时，尝试刷新/重进列表页后重试 1 次")
     try:
@@ -99,10 +88,7 @@ async def _wait_for_cards_selector(page: Page, expected_page_text: str) -> str |
 
     await page.wait_for_timeout(800)
     await _recover_to_commend(page, expected_page_text)
-    sel = await _poll()
-    if sel == fallback:
-        print("[WARN] 未匹配到指定容器路径，已降级使用全局卡片选择器")
-    return sel
+    return await _poll()
 
 
 async def _goto_page_number(page: Page, target_text: str) -> bool:
@@ -472,7 +458,7 @@ async def perform_scan(
                 await call_with_timeout_retry(
                     page.wait_for_selector,
                     "等待列表卡片",
-                    f"{CARD_CONTAINER_SELECTOR} {VIDEO_CARD_SELECTOR}",
+                    VIDEO_CARD_SELECTOR,
                     timeout=PW_TIMEOUT_MS,
                     state="attached",
                 )
