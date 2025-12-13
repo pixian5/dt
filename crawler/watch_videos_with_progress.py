@@ -134,10 +134,33 @@ async def _wait_player_ready(page: Page) -> None:
 
 
 async def _click_big_play_button(page: Page) -> None:
+    await _activate_player_controls(page)
+    try:
+        container = page.locator(".video-js").first
+        if await container.count():
+            try:
+                await call_with_timeout_retry(container.hover, "悬停播放器控件", timeout=PW_TIMEOUT_MS)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     btn = page.locator(".vjs-big-play-button").first
-    if await btn.count() == 0:
-        return
-    await call_with_timeout_retry(btn.click, "点击大播放按钮", timeout=PW_TIMEOUT_MS)
+    if await btn.count() != 0:
+        try:
+            await call_with_timeout_retry(btn.click, "点击大播放按钮", timeout=PW_TIMEOUT_MS)
+            return
+        except SystemExit:
+            try:
+                await call_with_timeout_retry(btn.click, "点击大播放按钮（force）", timeout=PW_TIMEOUT_MS, force=True)
+                return
+            except SystemExit:
+                pass
+
+    play = page.locator(".vjs-play-control").first
+    if await play.count() == 0:
+        raise SystemExit("未找到播放按钮（.vjs-play-control），无法启动播放")
+    await call_with_timeout_retry(play.click, "启动播放（play-control）", timeout=PW_TIMEOUT_MS, force=True)
 
 
 async def _activate_player_controls(page: Page) -> None:
