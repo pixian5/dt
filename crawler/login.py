@@ -186,18 +186,7 @@ async def perform_login(
         page = await context.new_page()
         await ensure_logged_in(page, username=username, password=password, open_only=open_only, skip_login=skip_login)
 
-        if keep_open:
-            print("[INFO] 登录完成！浏览器已打开。按 Ctrl+C 退出并关闭浏览器。")
-            try:
-                while True:
-                    await asyncio.sleep(3600)
-            except KeyboardInterrupt:
-                pass
-        else:
-            try:
-                await page.close()
-            except Exception:
-                pass
+        return
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

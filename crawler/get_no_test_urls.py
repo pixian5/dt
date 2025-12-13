@@ -473,18 +473,7 @@ async def perform_scan(
                 print(f"[WARN] 翻页失败：{exc}")
                 break
 
-        if keep_open:
-            print("[INFO] 扫描完成！浏览器已打开。按 Ctrl+C 退出并关闭浏览器。")
-            try:
-                while True:
-                    await asyncio.sleep(3600)
-            except (KeyboardInterrupt, asyncio.CancelledError):
-                pass
-        else:
-            try:
-                await page.close()
-            except Exception:
-                pass
+        return
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
