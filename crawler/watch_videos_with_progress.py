@@ -7,7 +7,6 @@ from pathlib import Path
 from playwright.async_api import async_playwright, Page
 
 from crawler.login import (
-    COMMEND_URL,
     PW_TIMEOUT_MS,
     call_with_timeout_retry,
     connect_chrome_over_cdp,
@@ -275,8 +274,6 @@ async def perform_watch(
         await ensure_logged_in(auth_page, username=username, password=password, open_only=open_only, skip_login=skip_login)
         if open_only and not skip_login:
             input("请在浏览器中完成手动登录后，按 Enter 继续：")
-
-        await call_with_timeout_retry(auth_page.goto, "登录后回到列表页", COMMEND_URL, wait_until="domcontentloaded")
 
         personal_page = await _open_personal_center(context)
         if await _check_progress(personal_page):
