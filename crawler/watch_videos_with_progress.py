@@ -176,15 +176,31 @@ async def _pause_then_resume(page: Page) -> None:
         await call_with_timeout_retry(play.get_attribute, "读取播放按钮class", "class", timeout=PW_TIMEOUT_MS)
     ) or ""
 
-    if "vjs-playing" in cls:
-        await call_with_timeout_retry(play.click, "暂停播放", timeout=PW_TIMEOUT_MS)
-        await page.wait_for_timeout(30000)
+    if "vjs-playing" not in cls:
+        return
 
+    await call_with_timeout_retry(play.click, "暂停播放", timeout=PW_TIMEOUT_MS)
+    await call_with_timeout_retry(
+        page.reload,
+        "暂停后刷新页面",
+        wait_until="domcontentloaded",
+        timeout=PW_TIMEOUT_MS,
+    )
+    await _wait_player_ready(page)
+    await _set_speed_2x(page)
+    await page.wait_for_timeout(5000)
+    await _click_big_play_button(page)
+    await page.wait_for_timeout(30000)
+
+    play2 = page.locator(".vjs-play-control").first
     cls2 = (
-        await call_with_timeout_retry(play.get_attribute, "读取播放按钮class", "class", timeout=PW_TIMEOUT_MS)
+        await call_with_timeout_retry(play2.get_attribute, "读取播放按钮class", "class", timeout=PW_TIMEOUT_MS)
     ) or ""
     if "vjs-paused" in cls2 and "vjs-ended" not in cls2:
-        await call_with_timeout_retry(play.click, "继续播放", timeout=PW_TIMEOUT_MS)
+        await call_with_timeout_retry(play2.click, "继续播放", timeout=PW_TIMEOUT_MS)
+        return
+
+    print("【找不到继续播放按钮】")
 
 
 async def _is_ended(page: Page) -> bool:
