@@ -180,6 +180,7 @@ async def _pause_then_resume(page: Page) -> None:
         return
 
     await call_with_timeout_retry(play.click, "暂停播放", timeout=PW_TIMEOUT_MS)
+    await page.wait_for_timeout(2000)
     await call_with_timeout_retry(
         page.reload,
         "暂停后刷新页面",
