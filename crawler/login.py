@@ -71,6 +71,19 @@ async def call_with_timeout_retry(func, action: str, /, *args, **kwargs):
         return await func(*args, **kwargs)
 
 
+async def _get_user_login_reference_text(page: Page) -> str:
+    try:
+        el = await call_with_timeout_retry(
+            page.wait_for_selector,
+            "检测用户登录按钮",
+            ".el-popover__reference",
+            timeout=PW_TIMEOUT_MS,
+        )
+        return ((await el.inner_text()) or "").strip()
+    except Exception:
+        return ""
+
+
 def load_local_secrets() -> None:
     candidates = [Path("secrets.local.env"), Path(__file__).resolve().parents[1] / "secrets.local.env"]
     for p in candidates:
@@ -98,6 +111,9 @@ async def _is_logged_in(page: Page) -> bool:
         )
         if "sso.dtdjzx.gov.cn" in page.url or "sso/login" in page.url:
             return False
+        ref_text = await _get_user_login_reference_text(page)
+        if ref_text == "用户登录":
+            return False
         await call_with_timeout_retry(
             page.wait_for_selector, "检测登录状态：等待页码", ".number.active", timeout=PW_TIMEOUT_MS
         )
@@ -113,7 +129,11 @@ async def ensure_logged_in(
         print("[INFO] 跳过登录（--skip-login）")
         return
 
-    if await _is_logged_in(page):
+    await call_with_timeout_retry(
+        page.goto, "打开列表页", COMMEND_URL, wait_until="networkidle", timeout=PW_TIMEOUT_MS
+    )
+    ref_text = await _get_user_login_reference_text(page)
+    if ref_text != "用户登录" and await _is_logged_in(page):
         print("[INFO] 已检测到当前会话已登录，跳过登录流程")
         return
 
@@ -151,26 +171,7 @@ async def ensure_logged_in(
         )
         await page.click("a.js-submit.tianze-loginbtn")
         await page.wait_for_timeout(3000)
-
-    try:
-        print(f"[INFO] 跳转到首页：{INDEX_URL}")
-        await call_with_timeout_retry(page.goto, "跳转到首页", INDEX_URL, wait_until="networkidle", timeout=PW_TIMEOUT_MS)
-        await page.wait_for_timeout(2000)
-        try:
-            login_btn = await page.query_selector("text=用户登录")
-            if login_btn:
-                print("[INFO] 检测到【用户登录】按钮，点击登录")
-                await login_btn.click()
-                await page.wait_for_timeout(2000)
-        except Exception:
-            pass
-        print(f"[INFO] 跳转到列表页：{COMMEND_URL}")
-        await call_with_timeout_retry(
-            page.goto, "跳转到列表页", COMMEND_URL, wait_until="networkidle", timeout=PW_TIMEOUT_MS
-        )
-        await page.wait_for_timeout(1500)
-    except Exception:
-        return
+    return
 
 
 async def perform_login(
