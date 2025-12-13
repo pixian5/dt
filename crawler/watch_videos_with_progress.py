@@ -140,12 +140,38 @@ async def _click_big_play_button(page: Page) -> None:
     await call_with_timeout_retry(btn.click, "点击大播放按钮", timeout=PW_TIMEOUT_MS)
 
 
+async def _activate_player_controls(page: Page) -> None:
+    container = page.locator(".video-js").first
+    if await container.count() == 0:
+        return
+    try:
+        await call_with_timeout_retry(container.click, "激活播放器控件", timeout=PW_TIMEOUT_MS, force=True)
+    except Exception:
+        return
+
+
 async def _set_speed_2x(page: Page) -> None:
+    await _activate_player_controls(page)
+
+    btn = page.locator(".vjs-playback-rate").first
+    if await btn.count():
+        try:
+            await call_with_timeout_retry(btn.click, "打开倍速菜单", timeout=PW_TIMEOUT_MS, force=True)
+            await call_with_timeout_retry(
+                page.wait_for_selector,
+                "等待倍速菜单项可见",
+                ".vjs-menu-item-text",
+                state="visible",
+                timeout=PW_TIMEOUT_MS,
+            )
+        except Exception:
+            pass
+
     items = page.locator(".vjs-menu-item-text")
     if await items.count() == 0:
         btn = page.locator(".vjs-playback-rate")
         if await btn.count():
-            await call_with_timeout_retry(btn.first.click, "打开倍速菜单", timeout=PW_TIMEOUT_MS)
+            await call_with_timeout_retry(btn.first.click, "打开倍速菜单", timeout=PW_TIMEOUT_MS, force=True)
             await page.wait_for_timeout(300)
         items = page.locator(".vjs-menu-item-text")
 
@@ -157,7 +183,10 @@ async def _set_speed_2x(page: Page) -> None:
     if t != "2x":
         raise SystemExit(f"倍速菜单第一项不是 2x，实际为：{t!r}")
 
-    await call_with_timeout_retry(first.click, "设置倍速 2x", timeout=PW_TIMEOUT_MS)
+    try:
+        await call_with_timeout_retry(first.click, "设置倍速 2x", timeout=PW_TIMEOUT_MS)
+    except SystemExit:
+        await call_with_timeout_retry(first.click, "设置倍速 2x（force）", timeout=PW_TIMEOUT_MS, force=True)
 
 
 async def _ensure_playing(page: Page) -> None:
@@ -270,10 +299,19 @@ async def perform_watch(
         context = browser.contexts[0] if browser.contexts else await browser.new_context()
         context.set_default_timeout(PW_TIMEOUT_MS)
 
-        auth_page = await context.new_page()
-        await ensure_logged_in(auth_page, username=username, password=password, open_only=open_only, skip_login=skip_login)
-        if open_only and not skip_login:
-            input("请在浏览器中完成手动登录后，按 Enter 继续：")
+        auth_page: Page | None = None
+        if not skip_login:
+            auth_page = await context.new_page()
+            await ensure_logged_in(
+                auth_page, username=username, password=password, open_only=open_only, skip_login=skip_login
+            )
+            if open_only:
+                input("请在浏览器中完成手动登录后，按 Enter 继续：")
+            else:
+                try:
+                    await auth_page.close()
+                except Exception:
+                    pass
 
         personal_page = await _open_personal_center(context)
         if await _check_progress(personal_page):
