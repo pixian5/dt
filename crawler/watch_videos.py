@@ -135,8 +135,9 @@ async def _check_ended(page: Page) -> bool:
     return ("vjs-ended" in cls) and (title.strip() == "Replay")
 
 
-async def _watch_single_url(page: Page, url: str) -> None:
-    await call_with_timeout_retry(page.goto, "打开课程详情页", url, wait_until="domcontentloaded", timeout=PW_TIMEOUT_MS)
+async def _watch_single_url(page: Page, url: str, *, already_opened: bool = False) -> None:
+    if not already_opened:
+        await call_with_timeout_retry(page.goto, "打开课程详情页", url, wait_until="domcontentloaded", timeout=PW_TIMEOUT_MS)
     await _wait_player_ready(page)
     await _click_big_play_button(page)
     await _click_first_speed_item(page)
@@ -180,17 +181,33 @@ async def perform_watch(
         if open_only and not skip_login:
             input("请在浏览器中完成手动登录后，按 Enter 继续：")
 
-        prev_page: Page | None = login_page
-        for url in _iter_urls_from_file(url_file):
+        urls_iter = iter(_iter_urls_from_file(url_file))
+        first_url = next(urls_iter, None)
+        if not first_url:
+            print("[WARN] url.txt 中未找到任何 https URL，结束")
+            return
+
+        current_page = await context.new_page()
+        print(f"[INFO] 开始播放：{first_url}")
+        await _watch_single_url(current_page, first_url)
+
+        for url in urls_iter:
+            next_page = await context.new_page()
+            await call_with_timeout_retry(
+                next_page.goto,
+                "打开课程详情页",
+                url,
+                wait_until="domcontentloaded",
+                timeout=PW_TIMEOUT_MS,
+            )
+            try:
+                await current_page.close()
+            except Exception:
+                pass
+
+            current_page = next_page
             print(f"[INFO] 开始播放：{url}")
-            page = await context.new_page()
-            await _watch_single_url(page, url)
-            if prev_page is not None and prev_page is not page:
-                try:
-                    await prev_page.close()
-                except Exception:
-                    pass
-            prev_page = page
+            await _watch_single_url(current_page, url, already_opened=True)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
