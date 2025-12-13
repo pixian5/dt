@@ -150,17 +150,41 @@ async def _click_big_play_button(page: Page) -> None:
         try:
             await call_with_timeout_retry(btn.click, "点击大播放按钮", timeout=PW_TIMEOUT_MS)
             return
-        except SystemExit:
+        except Exception:
             try:
-                await call_with_timeout_retry(btn.click, "点击大播放按钮（force）", timeout=PW_TIMEOUT_MS, force=True)
+                await call_with_timeout_retry(
+                    btn.click, "点击大播放按钮（force）", timeout=PW_TIMEOUT_MS, force=True
+                )
                 return
-            except SystemExit:
+            except Exception:
                 pass
 
+        if await _dom_click_first(page, ".vjs-big-play-button"):
+            return
+
     play = page.locator(".vjs-play-control").first
-    if await play.count() == 0:
-        raise SystemExit("未找到播放按钮（.vjs-play-control），无法启动播放")
-    await call_with_timeout_retry(play.click, "启动播放（play-control）", timeout=PW_TIMEOUT_MS, force=True)
+    if await play.count() != 0:
+        try:
+            await call_with_timeout_retry(play.click, "启动播放（play-control）", timeout=PW_TIMEOUT_MS, force=True)
+            return
+        except Exception:
+            pass
+
+    if await _dom_click_first(page, ".vjs-play-control"):
+        return
+
+    tech = page.locator(".vjs-tech").first
+    if await tech.count() != 0:
+        try:
+            await call_with_timeout_retry(tech.click, "启动播放（vjs-tech）", timeout=PW_TIMEOUT_MS, force=True)
+            return
+        except Exception:
+            pass
+
+    if await _dom_click_first(page, ".vjs-tech"):
+        return
+
+    raise SystemExit("无法启动播放：大播放按钮/播放按钮均不可用")
 
 
 async def _activate_player_controls(page: Page) -> None:
@@ -171,6 +195,23 @@ async def _activate_player_controls(page: Page) -> None:
         await call_with_timeout_retry(container.click, "激活播放器控件", timeout=PW_TIMEOUT_MS, force=True)
     except Exception:
         return
+
+
+async def _dom_click_first(page: Page, selector: str) -> bool:
+    try:
+        return bool(
+            await page.evaluate(
+                """(sel) => {
+                    const el = document.querySelector(sel);
+                    if (!el) return false;
+                    el.click();
+                    return true;
+                }""",
+                selector,
+            )
+        )
+    except Exception:
+        return False
 
 
 async def _set_speed_2x(page: Page) -> None:
