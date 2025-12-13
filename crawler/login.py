@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import os
+import subprocess
 from pathlib import Path
 
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError, async_playwright, Page
@@ -11,6 +12,50 @@ INDEX_URL = "https://gbwlxy.dtdjzx.gov.cn/index"
 COMMEND_URL = "https://gbwlxy.dtdjzx.gov.cn/content#/commendIndex"
 
 PW_TIMEOUT_MS = 5000
+
+
+async def connect_chrome_over_cdp(p, endpoint: str):
+    try:
+        browser = await p.chromium.connect_over_cdp(endpoint)
+        print(f"[INFO] 已连接本机 Chrome（CDP）：{endpoint}")
+        return browser
+    except Exception as exc:
+        local_9222 = endpoint in {"http://127.0.0.1:9222", "http://localhost:9222"}
+        if local_9222:
+            user_data_dir = os.getenv("CHROME_CDP_USER_DATA_DIR", "/tmp/chrome-cdp-9222")
+            try:
+                subprocess.Popen(
+                    [
+                        "open",
+                        "-na",
+                        "Google Chrome",
+                        "--args",
+                        "--remote-debugging-port=9222",
+                        f"--user-data-dir={user_data_dir}",
+                    ],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except Exception:
+                pass
+
+            for _ in range(20):
+                await asyncio.sleep(0.5)
+                try:
+                    browser = await p.chromium.connect_over_cdp(endpoint)
+                    print(f"[INFO] 已连接本机 Chrome（CDP）：{endpoint}")
+                    return browser
+                except Exception:
+                    continue
+
+        raise SystemExit(
+            "无法连接到本机 Chrome 的 CDP 端口："
+            f"{endpoint}\n"
+            "请先手动启动你的 Chrome 并开启远程调试端口，然后重试。\n"
+            "macOS 示例：\n"
+            "open -na \"Google Chrome\" --args --remote-debugging-port=9222 --user-data-dir=\"/tmp/chrome-cdp-9222\"\n"
+            "（如果你想用其它端口/地址，请设置环境变量 PLAYWRIGHT_CDP_ENDPOINT）"
+        ) from exc
 
 
 async def call_with_timeout_retry(func, action: str, /, *args, **kwargs):
@@ -133,18 +178,7 @@ async def perform_login(
 ) -> None:
     async with async_playwright() as p:
         endpoint = os.getenv("PLAYWRIGHT_CDP_ENDPOINT", "http://127.0.0.1:9222")
-        try:
-            browser = await p.chromium.connect_over_cdp(endpoint)
-            print(f"[INFO] 已连接本机 Chrome（CDP）：{endpoint}")
-        except Exception as exc:
-            raise SystemExit(
-                "无法连接到本机 Chrome 的 CDP 端口："
-                f"{endpoint}\n"
-                "请先手动启动你的 Chrome 并开启远程调试端口，然后重试。\n"
-                "macOS 示例：\n"
-                "open -na \"Google Chrome\" --args --remote-debugging-port=9222 --user-data-dir=\"/tmp/chrome-cdp-9222\"\n"
-                "（如果你想用其它端口/地址，请设置环境变量 PLAYWRIGHT_CDP_ENDPOINT）"
-            ) from exc
+        browser = await connect_chrome_over_cdp(p, endpoint)
 
         context = browser.contexts[0] if browser.contexts else await browser.new_context()
         context.set_default_timeout(PW_TIMEOUT_MS)

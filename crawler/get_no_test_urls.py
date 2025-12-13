@@ -5,7 +5,7 @@ from pathlib import Path
 
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError, async_playwright, Page
 
-from crawler.login import COMMEND_URL, INDEX_URL, LOGIN_URL, ensure_logged_in, load_local_secrets
+from crawler.login import COMMEND_URL, INDEX_URL, LOGIN_URL, connect_chrome_over_cdp, ensure_logged_in, load_local_secrets
 
 
 VIDEO_CARD_SELECTOR = ".video-warp-start"
@@ -165,18 +165,7 @@ async def perform_scan(
     start_page, end_page = _parse_page_range(page_arg)
     async with async_playwright() as p:
         endpoint = os.getenv("PLAYWRIGHT_CDP_ENDPOINT", "http://127.0.0.1:9222")
-        try:
-            browser = await p.chromium.connect_over_cdp(endpoint)
-            print(f"[INFO] 已连接本机 Chrome（CDP）：{endpoint}")
-        except Exception as exc:
-            raise SystemExit(
-                "无法连接到本机 Chrome 的 CDP 端口："
-                f"{endpoint}\n"
-                "请先手动启动你的 Chrome 并开启远程调试端口，然后重试。\n"
-                "macOS 示例：\n"
-                "open -na \"Google Chrome\" --args --remote-debugging-port=9222 --user-data-dir=\"/tmp/chrome-cdp-9222\"\n"
-                "（如果你想用其它端口/地址，请设置环境变量 PLAYWRIGHT_CDP_ENDPOINT）"
-            ) from exc
+        browser = await connect_chrome_over_cdp(p, endpoint)
 
         context = browser.contexts[0] if browser.contexts else await browser.new_context()
         context.set_default_timeout(PW_TIMEOUT_MS)
