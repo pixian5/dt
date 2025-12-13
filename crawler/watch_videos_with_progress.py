@@ -140,9 +140,9 @@ async def _click_big_play_button(page: Page) -> None:
         if await container.count():
             try:
                 await call_with_timeout_retry(container.hover, "悬停播放器控件", timeout=PW_TIMEOUT_MS)
-            except Exception:
+            except (SystemExit, Exception):
                 pass
-    except Exception:
+    except (SystemExit, Exception):
         pass
 
     btn = page.locator(".vjs-big-play-button").first
@@ -150,13 +150,13 @@ async def _click_big_play_button(page: Page) -> None:
         try:
             await call_with_timeout_retry(btn.click, "点击大播放按钮", timeout=PW_TIMEOUT_MS)
             return
-        except Exception:
+        except (SystemExit, Exception):
             try:
                 await call_with_timeout_retry(
                     btn.click, "点击大播放按钮（force）", timeout=PW_TIMEOUT_MS, force=True
                 )
                 return
-            except Exception:
+            except (SystemExit, Exception):
                 pass
 
         if await _dom_click_first(page, ".vjs-big-play-button"):
@@ -167,7 +167,7 @@ async def _click_big_play_button(page: Page) -> None:
         try:
             await call_with_timeout_retry(play.click, "启动播放（play-control）", timeout=PW_TIMEOUT_MS, force=True)
             return
-        except Exception:
+        except (SystemExit, Exception):
             pass
 
     if await _dom_click_first(page, ".vjs-play-control"):
@@ -178,7 +178,7 @@ async def _click_big_play_button(page: Page) -> None:
         try:
             await call_with_timeout_retry(tech.click, "启动播放（vjs-tech）", timeout=PW_TIMEOUT_MS, force=True)
             return
-        except Exception:
+        except (SystemExit, Exception):
             pass
 
     if await _dom_click_first(page, ".vjs-tech"):
@@ -193,7 +193,7 @@ async def _activate_player_controls(page: Page) -> None:
         return
     try:
         await call_with_timeout_retry(container.click, "激活播放器控件", timeout=PW_TIMEOUT_MS, force=True)
-    except Exception:
+    except (SystemExit, Exception):
         return
 
 
@@ -228,7 +228,7 @@ async def _set_speed_2x(page: Page) -> None:
                 state="visible",
                 timeout=PW_TIMEOUT_MS,
             )
-        except Exception:
+        except (SystemExit, Exception):
             pass
 
     items = page.locator(".vjs-menu-item-text")
