@@ -115,14 +115,14 @@ async def _wait_player_ready(page: Page) -> None:
         page.wait_for_selector,
         "等待播放器当前时间",
         ".vjs-current-time-display",
-        state="visible",
+        state="attached",
         timeout=PW_TIMEOUT_MS,
     )
     await call_with_timeout_retry(
         page.wait_for_selector,
         "等待播放器总时长",
         ".vjs-duration-display",
-        state="visible",
+        state="attached",
         timeout=PW_TIMEOUT_MS,
     )
     await call_with_timeout_retry(
