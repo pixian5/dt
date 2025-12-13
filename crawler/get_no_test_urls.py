@@ -423,7 +423,7 @@ async def perform_scan(
             try:
                 while True:
                     await asyncio.sleep(3600)
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt, asyncio.CancelledError):
                 pass
         else:
             try:
@@ -467,16 +467,19 @@ def main(argv: list[str] | None = None) -> None:
                 "或在项目根目录创建 secrets.local.env 提供"
             )
 
-    asyncio.run(
-        perform_scan(
-            username=username,
-            password=password,
-            open_only=open_only,
-            keep_open=keep_open,
-            skip_login=skip_login,
-            page_arg=page_arg,
+    try:
+        asyncio.run(
+            perform_scan(
+                username=username,
+                password=password,
+                open_only=open_only,
+                keep_open=keep_open,
+                skip_login=skip_login,
+                page_arg=page_arg,
+            )
         )
-    )
+    except KeyboardInterrupt:
+        return
 
 
 if __name__ == "__main__":
