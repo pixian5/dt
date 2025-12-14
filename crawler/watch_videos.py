@@ -17,6 +17,10 @@ def _ts() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _log(msg: str) -> None:
+    print(f"[{_ts()}] {msg}")
+
+
 def _parse_lines_range(lines_arg: str | None) -> tuple[int | None, int | None]:
     if not lines_arg:
         return None, None
@@ -97,14 +101,17 @@ def _parse_clock_text_to_seconds(text: str) -> int | None:
 
 async def _open_personal_center(context) -> Page:
     page = await context.new_page()
+    _log(f"打开个人中心页面：{PERSONAL_CENTER_URL}")
     await page.goto(PERSONAL_CENTER_URL, wait_until="domcontentloaded")
     return page
 
 
 async def _check_progress(personal_page: Page) -> bool:
     try:
+        _log(f"刷新个人中心：{PERSONAL_CENTER_URL}")
         await personal_page.goto(PERSONAL_CENTER_URL, wait_until="domcontentloaded", timeout=15000)
     except Exception:
+        _log("刷新个人中心失败（忽略，继续尝试读取进度）")
         pass
 
     loc = personal_page.locator(".plan-all.pro").first
@@ -113,6 +120,7 @@ async def _check_progress(personal_page: Page) -> bool:
             if await loc.count() != 0:
                 text = ((await loc.inner_text(timeout=1000)) or "").strip()
                 if text:
+                    _log(f"个人中心进度文本：{text}")
                     if "100%" in text:
                         print(f"【{_ts()}-已看完100%】")
                         return True
@@ -120,16 +128,19 @@ async def _check_progress(personal_page: Page) -> bool:
         except Exception:
             pass
         await personal_page.wait_for_timeout(1000)
+    _log("个人中心进度元素读取超时（30s），视为未完成")
     return False
 
 
 async def _wait_player_ready(page: Page) -> None:
+    _log("等待播放器元素就绪：.vjs-tech / .vjs-current-time-display / .vjs-duration-display")
     await page.wait_for_selector(".vjs-tech", state="attached", timeout=PW_TIMEOUT_MS)
     await page.wait_for_selector(".vjs-current-time-display", state="attached", timeout=PW_TIMEOUT_MS)
     await page.wait_for_selector(".vjs-duration-display", state="attached", timeout=PW_TIMEOUT_MS)
 
 
-async def _click_vjs_tech(page: Page) -> None:
+async def _click_vjs_tech(page: Page, action: str) -> None:
+    _log(f"点击播放器 vjs-tech：{action}")
     tech = page.locator(".vjs-tech").first
     if await tech.count() == 0:
         raise SystemExit("找不到 vjs-tech，无法点击播放/暂停")
@@ -137,6 +148,7 @@ async def _click_vjs_tech(page: Page) -> None:
 
 
 async def _set_speed_2x(page: Page) -> None:
+    _log("设置倍速：打开倍速菜单")
     btn = page.locator(".vjs-playback-rate").first
     if await btn.count():
         try:
@@ -155,6 +167,7 @@ async def _set_speed_2x(page: Page) -> None:
     if text != "2x":
         raise SystemExit(f"倍速菜单第一项不是 2x，实际为：{text!r}")
 
+    _log("设置倍速：点击 2x")
     await first.click(force=True, timeout=PW_TIMEOUT_MS)
 
 
@@ -167,33 +180,45 @@ async def _is_replay_state(page: Page) -> bool:
 
 
 async def _watch_course_page(page: Page, url: str) -> None:
+    _log(f"进入课程页，开始播放流程：{url}")
     await _wait_player_ready(page)
 
-    await _click_vjs_tech(page)
+    await _click_vjs_tech(page, "开始播放")
     await page.wait_for_timeout(1000)
 
-    await _click_vjs_tech(page)
+    await _click_vjs_tech(page, "暂停（1s）")
     await page.wait_for_timeout(1000)
 
     await _set_speed_2x(page)
 
-    await _click_vjs_tech(page)
+    await _click_vjs_tech(page, "恢复播放（2x）")
 
     while True:
         try:
             current_text = ((await page.locator(".vjs-current-time-display").first.inner_text()) or "").strip()
             duration_text = ((await page.locator(".vjs-duration-display").first.inner_text()) or "").strip()
         except Exception:
+            _log("读取播放时间失败，3s 后重试")
             await page.wait_for_timeout(3000)
             continue
 
         cur = _parse_clock_text_to_seconds(current_text)
         dur = _parse_clock_text_to_seconds(duration_text)
 
-        if cur is not None and dur is not None and cur == dur and await _is_replay_state(page):
+        _log(f"播放检测：current={current_text!r} duration={duration_text!r}")
+
+        if cur is not None and dur is not None and cur == dur:
+            replay = await _is_replay_state(page)
+            _log(f"播放结束判断：cur==dur，replay={replay}")
+        else:
+            replay = False
+
+        if cur is not None and dur is not None and cur == dur and replay:
             try:
+                _log("检测到 Replay，刷新课程页")
                 await page.reload(wait_until="domcontentloaded", timeout=15000)
             except Exception:
+                _log("刷新课程页失败（忽略）")
                 pass
             print(f"【{url}已看完。{_ts()}】")
             return
@@ -212,6 +237,7 @@ async def perform_watch(
 ) -> None:
     async with async_playwright() as p:
         endpoint = os.getenv("PLAYWRIGHT_CDP_ENDPOINT", "http://127.0.0.1:53333")
+        _log(f"连接 Chrome CDP：{endpoint}")
         browser = await connect_chrome_over_cdp(p, endpoint)
 
         context = browser.contexts[0] if browser.contexts else await browser.new_context()
@@ -220,16 +246,21 @@ async def perform_watch(
         personal_page: Page
         if not skip_login:
             personal_page = await context.new_page()
+            _log("开始登录检测/登录流程")
             await ensure_logged_in(personal_page, username=username, password=password, open_only=open_only, skip_login=False)
             if open_only:
+                _log("open-only：等待你手动登录后按 Enter")
                 input("请在浏览器中完成手动登录后，按 Enter 继续：")
         else:
             personal_page = await context.new_page()
+            _log("skip-login：跳过登录流程")
 
         await personal_page.wait_for_timeout(1000)
         try:
+            _log(f"在当前标签打开个人中心：{PERSONAL_CENTER_URL}")
             await personal_page.goto(PERSONAL_CENTER_URL, wait_until="domcontentloaded", timeout=15000)
         except Exception:
+            _log("打开个人中心失败（忽略）")
             pass
         if await _check_progress(personal_page):
             return
@@ -239,23 +270,29 @@ async def perform_watch(
             print("[WARN] url.txt 中未找到任何 https URL，结束")
             return
 
+        _log(f"读取到课程 URL 数量：{len(urls)}")
+
         prev_course_page: Page | None = None
 
         for url in urls:
             course_page = await context.new_page()
+            _log(f"新标签打开课程页：{url}")
             await course_page.goto(url, wait_until="domcontentloaded")
 
             if prev_course_page is not None:
                 await course_page.wait_for_timeout(3000)
                 try:
+                    _log("关闭上一课程标签页")
                     await prev_course_page.close()
                 except Exception:
+                    _log("关闭上一课程标签页失败（忽略）")
                     pass
 
             prev_course_page = course_page
 
             await _watch_course_page(course_page, url)
 
+            _log("课程播放结束，回个人中心检查进度")
             if await _check_progress(personal_page):
                 return
 
