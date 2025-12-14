@@ -218,7 +218,20 @@ async def ensure_logged_in(
         captcha = input("请输入验证码（validateCode）：").strip()
         if not captcha:
             raise SystemExit("验证码不能为空")
-        await page.fill("#validateCode", captcha)
+
+        try:
+            await page.wait_for_selector("#validateCode", timeout=15000)
+            await page.fill("#validateCode", captcha, timeout=15000)
+        except PlaywrightTimeoutError as exc:
+            if "dtdjzx.gov.cn/member" in page.url:
+                print("[INFO] 填写验证码时检测到跳转 member，视为已登录，跳过输入验证码")
+                return
+            raise SystemExit(f"填写验证码超时：{exc}") from exc
+        except Exception:
+            if "dtdjzx.gov.cn/member" in page.url:
+                print("[INFO] 填写验证码时检测到跳转 member，视为已登录，跳过输入验证码")
+                return
+            raise
 
         await call_with_timeout_retry(
             page.wait_for_selector, "等待登录提交按钮", "a.js-submit.tianze-loginbtn", timeout=PW_TIMEOUT_MS
