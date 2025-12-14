@@ -106,6 +106,28 @@ async def _open_personal_center(context) -> Page:
     return page
 
 
+async def _goto_personal_center(page: Page) -> None:
+    for attempt in range(2):
+        try:
+            _log(f"在当前标签跳转个人中心（第{attempt+1}次）：{PERSONAL_CENTER_URL}")
+            await page.goto(PERSONAL_CENTER_URL, wait_until="domcontentloaded", timeout=15000)
+        except Exception:
+            _log("跳转个人中心失败（忽略，继续校验/重试）")
+
+        try:
+            await page.wait_for_function(
+                "() => location.href.includes('personalCenter') || location.hash.includes('personalCenter')",
+                timeout=15000,
+            )
+            _log(f"已进入个人中心：{page.url}")
+            return
+        except Exception:
+            _log(f"个人中心URL校验失败，当前URL={page.url!r}")
+            await page.wait_for_timeout(1000)
+
+    raise SystemExit("打开个人中心失败：多次重试仍未进入 #/personalCenter")
+
+
 async def _check_progress(personal_page: Page) -> bool:
     try:
         _log(f"刷新个人中心：{PERSONAL_CENTER_URL}")
@@ -244,24 +266,29 @@ async def perform_watch(
         context.set_default_timeout(PW_TIMEOUT_MS)
 
         personal_page: Page
-        if not skip_login:
+        existing_pages = list(context.pages)
+        if existing_pages:
+            personal_page = existing_pages[-1]
+            try:
+                await personal_page.bring_to_front()
+            except Exception:
+                pass
+            _log(f"复用已有标签作为个人中心页：{personal_page.url}")
+        else:
             personal_page = await context.new_page()
+            _log("未发现已有标签，创建新标签作为个人中心页")
+
+        if not skip_login:
             _log("开始登录检测/登录流程")
             await ensure_logged_in(personal_page, username=username, password=password, open_only=open_only, skip_login=False)
             if open_only:
                 _log("open-only：等待你手动登录后按 Enter")
                 input("请在浏览器中完成手动登录后，按 Enter 继续：")
         else:
-            personal_page = await context.new_page()
             _log("skip-login：跳过登录流程")
 
         await personal_page.wait_for_timeout(1000)
-        try:
-            _log(f"在当前标签打开个人中心：{PERSONAL_CENTER_URL}")
-            await personal_page.goto(PERSONAL_CENTER_URL, wait_until="domcontentloaded", timeout=15000)
-        except Exception:
-            _log("打开个人中心失败（忽略）")
-            pass
+        await _goto_personal_center(personal_page)
         if await _check_progress(personal_page):
             return
 
