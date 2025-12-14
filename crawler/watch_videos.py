@@ -72,6 +72,17 @@ async def _save_storage_state(context, state_file: Path) -> None:
     await context.storage_state(path=str(state_file))
 
 
+async def _try_save_storage_state(context, state_file: Path, *, reason: str) -> bool:
+    try:
+        _log(f"保存登录态（{reason}）：{state_file}")
+        await _save_storage_state(context, state_file)
+        _log(f"已保存登录态：{state_file}")
+        return True
+    except Exception as exc:
+        _log(f"保存登录态失败（{reason}）：{exc}")
+        return False
+
+
 def _parse_lines_range(lines_arg: str | None) -> tuple[int | None, int | None]:
     if not lines_arg:
         return None, None
@@ -358,11 +369,15 @@ async def perform_watch(
                     open_only=False,
                     skip_login=False,
                 )
+                if save_state:
+                    await _try_save_storage_state(context, state_file, reason="登录后")
             else:
                 _log("skip-login：跳过登录流程")
 
             await personal_page.wait_for_timeout(1000)
             await _goto_personal_center(personal_page)
+            if save_state:
+                await _try_save_storage_state(context, state_file, reason="进入个人中心后")
             if await _check_progress(personal_page):
                 return
 
@@ -399,10 +414,9 @@ async def perform_watch(
         finally:
             if save_state:
                 try:
-                    await _save_storage_state(context, state_file)
-                    _log(f"已保存登录态：{state_file}")
-                except Exception as exc:
-                    _log(f"保存登录态失败：{exc}")
+                    await asyncio.shield(_try_save_storage_state(context, state_file, reason="退出前"))
+                except BaseException as exc:
+                    _log(f"退出前保存登录态被中断/失败：{exc}")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
