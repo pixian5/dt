@@ -6,12 +6,14 @@ from pathlib import Path
 
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError, async_playwright, Page
 
-from crawler.login import COMMEND_URL, INDEX_URL, LOGIN_URL, connect_chrome_over_cdp, ensure_logged_in, load_local_secrets
+from crawler.login import LOGIN_URL, connect_chrome_over_cdp, ensure_logged_in, load_local_secrets
 
 
 VIDEO_CARD_SELECTOR = ".video-warp-start"
 STATE_SELECTOR = ".state-paused"
 URL_OUTPUT_FILE = Path("url.txt")
+
+COMMEND_URL = "https://gbwlxy.dtdjzx.gov.cn/content#/commendIndex"
 
 USER_LOGIN_REF_SELECTOR = ".el-popover__reference"
 
