@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import json
 import os
 from datetime import datetime
 from pathlib import Path
@@ -11,6 +12,7 @@ from crawler.login import PW_TIMEOUT_MS, connect_chrome_over_cdp, ensure_logged_
 
 PERSONAL_CENTER_URL = "https://gbwlxy.dtdjzx.gov.cn/content#/personalCenter"
 URL_FILE = Path("url.txt")
+DEFAULT_STATE_FILE = Path("storage_state.json")
 
 
 def _ts() -> str:
@@ -19,6 +21,55 @@ def _ts() -> str:
 
 def _log(msg: str) -> None:
     print(f"[{_ts()}] {msg}")
+
+
+async def _apply_storage_state_to_context(context, state_file: Path) -> bool:
+    try:
+        raw = state_file.read_text(encoding="utf-8")
+        state = json.loads(raw)
+    except Exception:
+        return False
+
+    cookies = state.get("cookies") or []
+    if cookies:
+        try:
+            await context.add_cookies(cookies)
+        except Exception:
+            pass
+
+    origins = state.get("origins") or []
+    for origin_entry in origins:
+        origin = (origin_entry or {}).get("origin")
+        items = (origin_entry or {}).get("localStorage") or []
+        if not origin or not items:
+            continue
+        try:
+            p = await context.new_page()
+            try:
+                await p.goto(origin, wait_until="domcontentloaded", timeout=15000)
+                await p.evaluate(
+                    """(items) => {
+                        for (const it of items) {
+                            if (!it || !it.name) continue;
+                            try { localStorage.setItem(it.name, it.value ?? ''); } catch (e) {}
+                        }
+                    }""",
+                    items,
+                )
+            finally:
+                await p.close()
+        except Exception:
+            continue
+
+    return True
+
+
+async def _save_storage_state(context, state_file: Path) -> None:
+    try:
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    await context.storage_state(path=str(state_file))
 
 
 def _parse_lines_range(lines_arg: str | None) -> tuple[int | None, int | None]:
@@ -269,6 +320,9 @@ async def perform_watch(
     skip_login: bool,
     url_file: Path,
     lines_range: str | None,
+    state_file: Path,
+    load_state: bool,
+    save_state: bool,
 ) -> None:
     async with async_playwright() as p:
         endpoint = os.getenv("PLAYWRIGHT_CDP_ENDPOINT", "http://127.0.0.1:53333")
@@ -278,63 +332,81 @@ async def perform_watch(
         context = browser.contexts[0] if browser.contexts else await browser.new_context()
         context.set_default_timeout(PW_TIMEOUT_MS)
 
-        personal_page: Page
-        existing_pages = list(context.pages)
-        if existing_pages:
-            personal_page = existing_pages[-1]
-            try:
-                await personal_page.bring_to_front()
-            except Exception:
-                pass
-            _log(f"复用已有标签作为个人中心页：{personal_page.url}")
-        else:
-            personal_page = await context.new_page()
-            _log("未发现已有标签，创建新标签作为个人中心页")
+        if load_state and state_file.exists() and state_file.is_file():
+            if await _apply_storage_state_to_context(context, state_file):
+                _log(f"已从本地加载登录态：{state_file}")
 
-        if not skip_login:
-            _log("开始登录检测/登录流程")
-            await ensure_logged_in(personal_page, username=username, password=password, open_only=open_only, skip_login=False)
-            if open_only:
-                _log("open-only：等待你手动登录后按 Enter")
-                input("请在浏览器中完成手动登录后，按 Enter 继续：")
-        else:
-            _log("skip-login：跳过登录流程")
-
-        await personal_page.wait_for_timeout(1000)
-        await _goto_personal_center(personal_page)
-        if await _check_progress(personal_page):
-            return
-
-        urls = list(_iter_urls_from_file(url_file, lines_range=lines_range))
-        if not urls:
-            print("[WARN] url.txt 中未找到任何 https URL，结束")
-            return
-
-        _log(f"读取到课程 URL 数量：{len(urls)}")
-
-        prev_course_page: Page | None = None
-
-        for url in urls:
-            course_page = await context.new_page()
-            _log(f"新标签打开课程页：{url}")
-            await course_page.goto(url, wait_until="domcontentloaded")
-
-            if prev_course_page is not None:
-                await course_page.wait_for_timeout(3000)
+        try:
+            personal_page: Page
+            existing_pages = list(context.pages)
+            if existing_pages:
+                personal_page = existing_pages[-1]
                 try:
-                    _log("关闭上一课程标签页")
-                    await prev_course_page.close()
+                    await personal_page.bring_to_front()
                 except Exception:
-                    _log("关闭上一课程标签页失败（忽略）")
                     pass
+                _log(f"复用已有标签作为个人中心页：{personal_page.url}")
+            else:
+                personal_page = await context.new_page()
+                _log("未发现已有标签，创建新标签作为个人中心页")
 
-            prev_course_page = course_page
+            if not skip_login:
+                _log("开始登录检测/登录流程")
+                await ensure_logged_in(
+                    personal_page,
+                    username=username,
+                    password=password,
+                    open_only=open_only,
+                    skip_login=False,
+                )
+                if open_only:
+                    _log("open-only：等待你手动登录后按 Enter")
+                    input("请在浏览器中完成手动登录后，按 Enter 继续：")
+            else:
+                _log("skip-login：跳过登录流程")
 
-            await _watch_course_page(course_page, url)
-
-            _log("课程播放结束，回个人中心检查进度")
+            await personal_page.wait_for_timeout(1000)
+            await _goto_personal_center(personal_page)
             if await _check_progress(personal_page):
                 return
+
+            urls = list(_iter_urls_from_file(url_file, lines_range=lines_range))
+            if not urls:
+                print("[WARN] url.txt 中未找到任何 https URL，结束")
+                return
+
+            _log(f"读取到课程 URL 数量：{len(urls)}")
+
+            prev_course_page: Page | None = None
+
+            for url in urls:
+                course_page = await context.new_page()
+                _log(f"新标签打开课程页：{url}")
+                await course_page.goto(url, wait_until="domcontentloaded")
+
+                if prev_course_page is not None:
+                    await course_page.wait_for_timeout(3000)
+                    try:
+                        _log("关闭上一课程标签页")
+                        await prev_course_page.close()
+                    except Exception:
+                        _log("关闭上一课程标签页失败（忽略）")
+                        pass
+
+                prev_course_page = course_page
+
+                await _watch_course_page(course_page, url)
+
+                _log("课程播放结束，回个人中心检查进度")
+                if await _check_progress(personal_page):
+                    return
+        finally:
+            if save_state:
+                try:
+                    await _save_storage_state(context, state_file)
+                    _log(f"已保存登录态：{state_file}")
+                except Exception as exc:
+                    _log(f"保存登录态失败：{exc}")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -346,6 +418,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--skip-login", action="store_true", help="已手动登录时使用，跳过登录流程")
     parser.add_argument("--url-file", default=str(URL_FILE), help="URL 文件路径（默认 url.txt）")
     parser.add_argument("--lines", default=None, help="读取的行范围：1 / 1- / 1-5（按 url.txt 行号）")
+    parser.add_argument("--state-file", default=str(DEFAULT_STATE_FILE), help="登录态保存文件（storage_state）")
+    parser.add_argument("--no-load-state", action="store_true", help="不从本地文件加载登录态")
+    parser.add_argument("--no-save-state", action="store_true", help="不保存登录态到本地文件")
     return parser.parse_args(argv)
 
 
@@ -366,6 +441,10 @@ def main(argv: list[str] | None = None) -> None:
                 "或在项目根目录创建 secrets.local.env 提供"
             )
 
+    state_file = Path(str(args.state_file))
+    load_state = not bool(args.no_load_state)
+    save_state = not bool(args.no_save_state)
+
     asyncio.run(
         perform_watch(
             username=username,
@@ -374,6 +453,9 @@ def main(argv: list[str] | None = None) -> None:
             skip_login=skip_login,
             url_file=Path(args.url_file),
             lines_range=args.lines,
+            state_file=state_file,
+            load_state=load_state,
+            save_state=save_state,
         )
     )
 
