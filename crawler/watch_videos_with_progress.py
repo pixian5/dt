@@ -90,22 +90,33 @@ async def _open_personal_center(context) -> Page:
 
 
 async def _check_progress(personal_page: Page) -> bool:
-    await call_with_timeout_retry(
-        personal_page.goto,
-        "刷新个人中心",
-        PERSONAL_CENTER_URL,
-        wait_until="domcontentloaded",
-        timeout=PW_TIMEOUT_MS,
-    )
-    loc = personal_page.locator(".plan-all.pro").first
     try:
-        await call_with_timeout_retry(loc.wait_for, "等待进度元素", state="visible", timeout=PW_TIMEOUT_MS)
-    except Exception:
-        return False
-    text = ((await call_with_timeout_retry(loc.inner_text, "读取进度文本", timeout=PW_TIMEOUT_MS)) or "").strip()
-    if "100%" in text:
-        print(f"【{_ts()}-已看完100%】")
-        return True
+        await call_with_timeout_retry(
+            personal_page.goto,
+            "刷新个人中心",
+            PERSONAL_CENTER_URL,
+            wait_until="domcontentloaded",
+            timeout=PW_TIMEOUT_MS,
+        )
+    except (SystemExit, Exception):
+        try:
+            await personal_page.goto(PERSONAL_CENTER_URL, wait_until="domcontentloaded", timeout=15000)
+        except Exception:
+            pass
+
+    loc = personal_page.locator(".plan-all.pro").first
+    for _ in range(30):
+        try:
+            if await loc.count() != 0:
+                text = ((await loc.inner_text(timeout=1000)) or "").strip()
+                if text:
+                    if "100%" in text:
+                        print(f"【{_ts()}-已看完100%】")
+                        return True
+                    return False
+        except Exception:
+            pass
+        await personal_page.wait_for_timeout(1000)
     return False
 
 

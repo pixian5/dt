@@ -170,7 +170,7 @@ async def _watch_course_page(page: Page, url: str) -> None:
     await _wait_player_ready(page)
 
     await _click_vjs_tech(page)
-    await page.wait_for_timeout(3000)
+    await page.wait_for_timeout(1000)
 
     await _click_vjs_tech(page)
     await page.wait_for_timeout(1000)
@@ -184,7 +184,7 @@ async def _watch_course_page(page: Page, url: str) -> None:
             current_text = ((await page.locator(".vjs-current-time-display").first.inner_text()) or "").strip()
             duration_text = ((await page.locator(".vjs-duration-display").first.inner_text()) or "").strip()
         except Exception:
-            await page.wait_for_timeout(10000)
+            await page.wait_for_timeout(3000)
             continue
 
         cur = _parse_clock_text_to_seconds(current_text)
@@ -198,7 +198,7 @@ async def _watch_course_page(page: Page, url: str) -> None:
             print(f"【{url}已看完。{_ts()}】")
             return
 
-        await page.wait_for_timeout(10000)
+        await page.wait_for_timeout(3000)
 
 
 async def perform_watch(
@@ -217,18 +217,20 @@ async def perform_watch(
         context = browser.contexts[0] if browser.contexts else await browser.new_context()
         context.set_default_timeout(PW_TIMEOUT_MS)
 
+        personal_page: Page
         if not skip_login:
-            login_page = await context.new_page()
-            await ensure_logged_in(login_page, username=username, password=password, open_only=open_only, skip_login=False)
+            personal_page = await context.new_page()
+            await ensure_logged_in(personal_page, username=username, password=password, open_only=open_only, skip_login=False)
             if open_only:
                 input("请在浏览器中完成手动登录后，按 Enter 继续：")
-            else:
-                try:
-                    await login_page.close()
-                except Exception:
-                    pass
+        else:
+            personal_page = await context.new_page()
 
-        personal_page = await _open_personal_center(context)
+        await personal_page.wait_for_timeout(1000)
+        try:
+            await personal_page.goto(PERSONAL_CENTER_URL, wait_until="domcontentloaded", timeout=15000)
+        except Exception:
+            pass
         if await _check_progress(personal_page):
             return
 
