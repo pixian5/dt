@@ -482,7 +482,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="获取无随堂测验(否)课程详情链接（始终可视化模式）")
     parser.add_argument("--username", default=None, help="登录用户名")
     parser.add_argument("--password", default=None, help="登录密码")
-    parser.add_argument("--open-only", action="store_true", help="仅打开登录页，不自动填写/提交")
+    parser.add_argument("--open-only", dest="open_only", action="store_true", default=True, help="仅打开登录页，不自动填写/提交")
+    parser.add_argument("--no-open-only", dest="open_only", action="store_false", help="关闭 open-only（允许自动填写/提交）")
     parser.add_argument(
         "--close-after", action="store_true", help="扫描完成后自动关闭浏览器（默认保持打开，按 Ctrl+C 退出）"
     )
