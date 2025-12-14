@@ -244,6 +244,33 @@ async def _click_vjs_tech(page: Page, action: str) -> None:
     await tech.click(force=True, timeout=PW_TIMEOUT_MS)
 
 
+async def _ensure_playing(page: Page, reason: str) -> None:
+    _log(f"确保播放中：{reason}")
+    try:
+        state = await page.evaluate(
+            """async () => {
+                const v = document.querySelector('video.vjs-tech, .vjs-tech');
+                if (!v) return { ok: false, err: 'no-video' };
+                try { v.muted = true; } catch (e) {}
+                try { await v.play(); } catch (e) { return { ok: false, err: String(e), paused: v.paused, readyState: v.readyState, currentTime: v.currentTime }; }
+                return { ok: true, paused: v.paused, readyState: v.readyState, currentTime: v.currentTime };
+            }"""
+        )
+        _log(f"播放状态（js-play）：{state}")
+        if isinstance(state, dict) and state.get("ok"):
+            return
+    except Exception as exc:
+        _log(f"js play 调用失败（忽略）：{exc}")
+
+    try:
+        btn = page.locator("button.vjs-play-control").first
+        if await btn.count() != 0:
+            _log("兜底：点击 vjs-play-control 按钮")
+            await btn.click(force=True, timeout=PW_TIMEOUT_MS)
+    except Exception as exc:
+        _log(f"点击 vjs-play-control 失败（忽略）：{exc}")
+
+
 async def _set_speed_2x(page: Page) -> None:
     _log("设置倍速：打开倍速菜单")
     btn = page.locator(".vjs-playback-rate").first
@@ -289,6 +316,10 @@ async def _watch_course_page(page: Page, url: str) -> None:
     await _set_speed_2x(page)
 
     await _click_vjs_tech(page, "恢复播放（2x）")
+    await _ensure_playing(page, "设置 2x 后恢复播放")
+
+    last_cur: int | None = None
+    stalled = 0
 
     while True:
         try:
@@ -303,6 +334,25 @@ async def _watch_course_page(page: Page, url: str) -> None:
         dur = _parse_clock_text_to_seconds(duration_text)
 
         _log(f"播放检测：current={current_text!r} duration={duration_text!r}")
+
+        if cur is not None:
+            if last_cur is None:
+                last_cur = cur
+                stalled = 0
+            else:
+                if cur == last_cur:
+                    stalled += 1
+                elif cur < last_cur:
+                    _log(f"检测到播放时间回退：{last_cur} -> {cur}")
+                    stalled = 0
+                else:
+                    stalled = 0
+                    last_cur = cur
+
+        if stalled >= 3:
+            _log(f"播放疑似卡住（连续{stalled}次未前进，cur={cur}），尝试恢复播放")
+            await _ensure_playing(page, f"检测到卡住 cur={cur}")
+            stalled = 0
 
         if cur is not None and dur is not None and cur == dur:
             replay = await _is_replay_state(page)
