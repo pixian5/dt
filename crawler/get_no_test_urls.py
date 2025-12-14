@@ -216,7 +216,7 @@ async def perform_scan(
 ) -> None:
     start_page, end_page = _parse_page_range(page_arg)
     async with async_playwright() as p:
-        endpoint = os.getenv("PLAYWRIGHT_CDP_ENDPOINT", "http://127.0.0.1:9222")
+        endpoint = os.getenv("PLAYWRIGHT_CDP_ENDPOINT", "http://127.0.0.1:53333")
         browser = await connect_chrome_over_cdp(p, endpoint)
 
         context = browser.contexts[0] if browser.contexts else await browser.new_context()

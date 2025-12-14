@@ -22,9 +22,10 @@ async def connect_chrome_over_cdp(p, endpoint: str):
         print(f"[INFO] 已连接本机 Chrome（CDP）：{endpoint}")
         return browser
     except Exception as exc:
-        local_9222 = endpoint in {"http://127.0.0.1:9222", "http://localhost:9222"}
-        if local_9222:
-            user_data_dir = os.getenv("CHROME_CDP_USER_DATA_DIR", "/tmp/chrome-cdp-9222")
+        local_53333 = endpoint in {"http://127.0.0.1:53333", "http://localhost:53333"}
+        if local_53333:
+            user_data_dir = os.getenv("CHROME_CDP_USER_DATA_DIR", "~/chrome-cdp-53333")
+            user_data_dir = os.path.expanduser(user_data_dir)
             try:
                 subprocess.Popen(
                     [
@@ -32,7 +33,7 @@ async def connect_chrome_over_cdp(p, endpoint: str):
                         "-na",
                         "Google Chrome",
                         "--args",
-                        "--remote-debugging-port=9222",
+                        "--remote-debugging-port=53333",
                         f"--user-data-dir={user_data_dir}",
                     ],
                     stdout=subprocess.DEVNULL,
@@ -55,7 +56,7 @@ async def connect_chrome_over_cdp(p, endpoint: str):
             f"{endpoint}\n"
             "请先手动启动你的 Chrome 并开启远程调试端口，然后重试。\n"
             "macOS 示例：\n"
-            "open -na \"Google Chrome\" --args --remote-debugging-port=9222 --user-data-dir=\"/tmp/chrome-cdp-9222\"\n"
+            "open -na \"Google Chrome\" --args --remote-debugging-port=53333 --user-data-dir=\"~/chrome-cdp-53333\"\n"
             "（如果你想用其它端口/地址，请设置环境变量 PLAYWRIGHT_CDP_ENDPOINT）"
         ) from exc
 
@@ -249,7 +250,7 @@ async def perform_login(
     save_state: bool = True,
 ) -> None:
     async with async_playwright() as p:
-        endpoint = os.getenv("PLAYWRIGHT_CDP_ENDPOINT", "http://127.0.0.1:9222")
+        endpoint = os.getenv("PLAYWRIGHT_CDP_ENDPOINT", "http://127.0.0.1:53333")
         browser = await connect_chrome_over_cdp(p, endpoint)
 
         context = browser.contexts[0] if browser.contexts else await browser.new_context()
