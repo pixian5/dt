@@ -316,7 +316,6 @@ async def perform_watch(
     *,
     username: str,
     password: str,
-    open_only: bool,
     skip_login: bool,
     url_file: Path,
     lines_range: str | None,
@@ -356,12 +355,9 @@ async def perform_watch(
                     personal_page,
                     username=username,
                     password=password,
-                    open_only=open_only,
+                    open_only=False,
                     skip_login=False,
                 )
-                if open_only:
-                    _log("open-only：等待你手动登录后按 Enter")
-                    input("请在浏览器中完成手动登录后，按 Enter 继续：")
             else:
                 _log("skip-login：跳过登录流程")
 
@@ -413,8 +409,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="看视频脚本：登录→个人中心进度→按 url.txt 新标签逐课播放（vjs-tech 控制）")
     parser.add_argument("--username", default=None, help="登录用户名")
     parser.add_argument("--password", default=None, help="登录密码")
-    parser.add_argument("--open-only", dest="open_only", action="store_true", default=True, help="仅打开登录页，不自动填写/提交")
-    parser.add_argument("--no-open-only", dest="open_only", action="store_false", help="关闭 open-only（允许自动填写/提交）")
     parser.add_argument("--skip-login", action="store_true", help="已手动登录时使用，跳过登录流程")
     parser.add_argument("--url-file", default=str(URL_FILE), help="URL 文件路径（默认 url.txt）")
     parser.add_argument("--lines", default=None, help="读取的行范围：1 / 1- / 1-5（按 url.txt 行号）")
@@ -427,14 +421,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> None:
     load_local_secrets()
     args = parse_args(argv)
-
-    open_only = bool(args.open_only)
     skip_login = bool(args.skip_login)
 
     username = args.username or os.getenv("DT_CRAWLER_USERNAME") or ""
     password = args.password or os.getenv("DT_CRAWLER_PASSWORD") or ""
 
-    if not open_only and not skip_login:
+    if not skip_login:
         if not username or not password:
             raise SystemExit(
                 "缺少登录信息：请通过参数 --username/--password，或环境变量 DT_CRAWLER_USERNAME/DT_CRAWLER_PASSWORD，"
@@ -449,7 +441,6 @@ def main(argv: list[str] | None = None) -> None:
         perform_watch(
             username=username,
             password=password,
-            open_only=open_only,
             skip_login=skip_login,
             url_file=Path(args.url_file),
             lines_range=args.lines,
