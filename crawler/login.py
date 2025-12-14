@@ -168,9 +168,6 @@ async def _is_logged_in(page: Page) -> bool:
         ref_text = await _get_user_login_reference_text(page)
         if ref_text == "用户登录":
             return False
-        await call_with_timeout_retry(
-            page.wait_for_selector, "检测登录状态：等待页码", ".number.active", timeout=PW_TIMEOUT_MS
-        )
         return "commendIndex" in page.url
     except Exception:
         return False
