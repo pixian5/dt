@@ -222,6 +222,11 @@ async def perform_watch(
             await ensure_logged_in(login_page, username=username, password=password, open_only=open_only, skip_login=False)
             if open_only:
                 input("请在浏览器中完成手动登录后，按 Enter 继续：")
+            else:
+                try:
+                    await login_page.close()
+                except Exception:
+                    pass
 
         personal_page = await _open_personal_center(context)
         if await _check_progress(personal_page):
