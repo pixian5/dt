@@ -191,41 +191,57 @@ async def _goto_personal_center(page: Page) -> None:
 
 
 async def _check_progress(personal_page: Page) -> bool:
-    try:
-        _log(f"刷新个人中心：{PERSONAL_CENTER_URL}")
-        await personal_page.goto(PERSONAL_CENTER_URL, wait_until="domcontentloaded", timeout=15000)
-    except Exception:
-        _log("刷新个人中心 goto 失败（忽略，继续校验是否仍在 personalCenter）")
+    async def _read_progress_text() -> str | None:
+        loc = personal_page.locator(".plan-all.pro").first
+        for _ in range(15):
+            try:
+                if await loc.count() != 0:
+                    text = ((await loc.inner_text(timeout=1000)) or "").strip()
+                    if text:
+                        return text
+            except Exception:
+                pass
+            await personal_page.wait_for_timeout(1000)
+        return None
 
-    if "personalCenter" not in (personal_page.url or ""):
-        _log(f"刷新后疑似被重定向，当前URL={personal_page.url!r}，尝试跳回个人中心")
-        await _goto_personal_center(personal_page)
+    for attempt in range(3):
+        if attempt == 0:
+            try:
+                _log(f"刷新个人中心：{PERSONAL_CENTER_URL}")
+                await personal_page.goto(PERSONAL_CENTER_URL, wait_until="domcontentloaded", timeout=15000)
+            except Exception:
+                _log("刷新个人中心 goto 失败（忽略，继续校验是否仍在 personalCenter）")
+        else:
+            _log("进度为 0%，1s 后刷新个人中心并重新检查")
+            await personal_page.wait_for_timeout(1000)
+            try:
+                await personal_page.reload(wait_until="domcontentloaded", timeout=15000)
+            except Exception:
+                try:
+                    await personal_page.goto(PERSONAL_CENTER_URL, wait_until="domcontentloaded", timeout=15000)
+                except Exception:
+                    pass
 
-    _log("等待 4s 让个人中心进度渲染")
-    await personal_page.wait_for_timeout(4000)
+        if "personalCenter" not in (personal_page.url or ""):
+            _log(f"刷新后疑似被重定向，当前URL={personal_page.url!r}，尝试跳回个人中心")
+            await _goto_personal_center(personal_page)
 
-    loc = personal_page.locator(".plan-all.pro").first
-    zero_seen = 0
-    for _ in range(30):
-        try:
-            if await loc.count() != 0:
-                text = ((await loc.inner_text(timeout=1000)) or "").strip()
-                if text:
-                    _log(f"个人中心进度文本：{text}")
-                    if "100%" in text:
-                        print(f"【{_ts()}-已看完100%】")
-                        return True
-                    if text == "0%":
-                        zero_seen += 1
-                        if zero_seen < 5:
-                            _log("进度为 0%（可能未渲染完成），继续等待")
-                            await personal_page.wait_for_timeout(1000)
-                            continue
-                    return False
-        except Exception:
-            pass
-        await personal_page.wait_for_timeout(1000)
-    _log("个人中心进度元素读取超时（30s），视为未完成")
+        _log("等待 4s 让个人中心进度渲染")
+        await personal_page.wait_for_timeout(4000)
+
+        text = await _read_progress_text()
+        if not text:
+            _log("个人中心进度文本读取超时（15s），视为未完成")
+            return False
+
+        _log(f"个人中心进度文本：{text}")
+        if "100%" in text:
+            print(f"【{_ts()}-已看完100%】")
+            return True
+        if text != "0%":
+            return False
+
+    _log("个人中心进度多次刷新仍为 0%，放弃继续检查")
     return False
 
 
