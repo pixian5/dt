@@ -13,11 +13,11 @@ PERSONAL_CENTER_URL = "https://gbwlxy.dtdjzx.gov.cn/content#/personalCenter"
 
 
 def _ts() -> str:
-    return datetime.now().strftime("%Y-%m-%d-%H:%M:%S")
+    return datetime.now().strftime("%H:%M:%S")
 
 
 def _log(msg: str) -> None:
-    print(f"[{_ts()}] {msg}")
+    print(f"{_ts()} {msg}")
 
 
 def _pick_url_file() -> Path:
