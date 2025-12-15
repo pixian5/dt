@@ -275,6 +275,20 @@ async def _is_replay_state(page: Page) -> bool:
     return title.strip() == "Replay"
 
 
+async def _recover_course_page(page: Page, url: str, reason: str) -> None:
+    _log(f"{reason}：尝试刷新页面恢复")
+    try:
+        await page.reload(wait_until="domcontentloaded", timeout=60000)
+        return
+    except Exception as exc:
+        _log(f"刷新失败，改用重新打开课程链接恢复（err={exc}）")
+
+    try:
+        await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+    except Exception as exc:
+        _log(f"重新打开课程链接仍失败（err={exc}），稍后继续尝试")
+
+
 async def _watch_course(page: Page, url: str) -> None:
     _log(f"进入课程页，开始播放流程：{url}")
     await _play_and_set_2x(page)
@@ -318,8 +332,11 @@ async def _watch_course(page: Page, url: str) -> None:
 
         if stalled >= 2:
             _log(f"播放疑似卡住（连续{stalled}次时间未变化，cur={cur}），刷新页面并重试播放初始化")
-            await page.reload(wait_until="domcontentloaded", timeout=15000)
-            await _play_and_set_2x(page)
+            await _recover_course_page(page, url, "播放疑似卡住")
+            try:
+                await _play_and_set_2x(page)
+            except Exception as exc:
+                _log(f"重试播放初始化失败（err={exc}），稍后继续检测")
             stalled = 0
             last_cur = None
             await page.wait_for_timeout(10000)
@@ -327,7 +344,10 @@ async def _watch_course(page: Page, url: str) -> None:
 
         if cur is not None and dur is not None and cur == dur:
             if await _is_replay_state(page):
-                await page.reload(wait_until="domcontentloaded", timeout=15000)
+                try:
+                    await page.reload(wait_until="domcontentloaded", timeout=60000)
+                except Exception:
+                    pass
                 print(f"【{_ts()} {url}已看完。】")
                 return
 
