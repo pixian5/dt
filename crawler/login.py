@@ -193,7 +193,7 @@ async def ensure_logged_in(
     print("【请在网页输入验证码】")
     print("[INFO] 请在网页中输入验证码并点击登录按钮，程序将每隔 2 秒检查是否已登录")
 
-    max_wait_seconds = 300
+    max_wait_seconds = 30
     for i in range(max_wait_seconds // 2):
         await page.wait_for_timeout(2000)
 
