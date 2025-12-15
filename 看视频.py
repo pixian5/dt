@@ -91,7 +91,7 @@ def _iter_urls(p: Path, *, lines_range: str | None = None):
             continue
         if not s.startswith("https"):
             continue
-        yield s
+        yield idx, s
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -257,7 +257,7 @@ async def _is_replay_state(page: Page) -> bool:
 
 
 async def _watch_course(page: Page, url: str) -> None:
-    _log(f"进入课程页：{url}")
+    _log(f"进入课程页，开始播放流程：{url}")
     await _play_and_set_2x(page)
 
     last_cur: int | None = None
@@ -346,16 +346,17 @@ async def main(argv: list[str] | None = None) -> None:
         await _close_other_pages(context, personal_page)
 
         url_file = Path(str(args.url_file)) if args.url_file else _pick_url_file()
-        urls = list(_iter_urls(url_file, lines_range=args.lines))
-        if not urls:
+        items = list(_iter_urls(url_file, lines_range=args.lines))
+        if not items:
             raise SystemExit(f"未找到任何 https URL：{url_file}（lines={args.lines!r}）")
 
-        _log(f"读取到课程数量：{len(urls)}（file={str(url_file)!r} lines={args.lines!r}）")
+        _log(f"读取到课程数量：{len(items)}（file={str(url_file)!r} lines={args.lines!r}）")
 
         prev_course_page: Page | None = None
 
-        for url in urls:
+        for line_no, url in items:
             course_page = await context.new_page()
+            _log(f"具体看了第 {line_no} 行的课程：{url}")
             _log(f"新标签打开课程：{url}")
             await course_page.goto(url, wait_until="domcontentloaded", timeout=15000)
 
