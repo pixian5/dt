@@ -1,0 +1,296 @@
+import asyncio
+import os
+from datetime import datetime
+from pathlib import Path
+
+from playwright.async_api import async_playwright, Page
+
+from crawler.login import PW_TIMEOUT_MS, connect_chrome_over_cdp, ensure_logged_in, load_local_secrets
+
+
+PERSONAL_CENTER_URL = "https://gbwlxy.dtdjzx.gov.cn/content#/personalCenter"
+
+
+def _ts() -> str:
+    return datetime.now().strftime("%Y-%m-%d-%H:%M:%S")
+
+
+def _pick_url_file() -> Path:
+    candidates = [Path("URL.txt"), Path("url.txt")]
+    for p in candidates:
+        if p.exists() and p.is_file():
+            return p
+    return candidates[-1]
+
+
+def _iter_urls(p: Path):
+    try:
+        lines = p.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        try:
+            lines = p.read_text(encoding="utf-8-sig").splitlines()
+        except Exception as exc:
+            raise SystemExit(f"无法读取 URL 文件：{p} ({exc})") from exc
+
+    for raw in lines:
+        s = (raw or "").strip()
+        if not s:
+            continue
+        if not s.startswith("https"):
+            continue
+        yield s
+
+
+def _parse_clock_text_to_seconds(text: str) -> int | None:
+    s = (text or "").strip()
+    if not s:
+        return None
+
+    parts = [p.strip() for p in s.split(":")]
+    if not all(p.isdigit() for p in parts):
+        return None
+
+    if len(parts) == 2:
+        mm, ss = parts
+        return int(mm) * 60 + int(ss)
+    if len(parts) == 3:
+        hh, mm, ss = parts
+        return int(hh) * 3600 + int(mm) * 60 + int(ss)
+    return None
+
+
+async def _read_progress_text(page: Page) -> str:
+    loc = page.locator(".plan-all.pro").first
+    for _ in range(30):
+        try:
+            if await loc.count() != 0:
+                text = ((await loc.inner_text(timeout=1000)) or "").strip()
+                if text:
+                    return text
+        except Exception:
+            pass
+        await page.wait_for_timeout(1000)
+    return ""
+
+
+async def _print_progress(page: Page) -> bool:
+    text = await _read_progress_text(page)
+    if text:
+        print(f"[{_ts()}] 当前进度：{text}")
+    else:
+        print(f"[{_ts()}] 当前进度读取失败")
+
+    if "100%" in (text or ""):
+        print(f"【{_ts()}-已看完100%】")
+        return True
+    return False
+
+
+async def _goto_personal_center_in_current_tab(page: Page) -> None:
+    await page.wait_for_timeout(1000)
+    await page.goto(PERSONAL_CENTER_URL, wait_until="domcontentloaded", timeout=15000)
+
+
+async def _refresh_personal_center(page: Page) -> None:
+    try:
+        await page.reload(wait_until="domcontentloaded", timeout=15000)
+    except Exception:
+        await page.goto(PERSONAL_CENTER_URL, wait_until="domcontentloaded", timeout=15000)
+
+
+async def _wait_player_ready(page: Page) -> None:
+    await page.wait_for_selector(".vjs-tech", state="attached", timeout=PW_TIMEOUT_MS)
+    await page.wait_for_selector(".vjs-current-time-display", state="attached", timeout=PW_TIMEOUT_MS)
+    await page.wait_for_selector(".vjs-duration-display", state="attached", timeout=PW_TIMEOUT_MS)
+
+
+async def _click_vjs_tech(page: Page, action: str) -> None:
+    tech = page.locator(".vjs-tech").first
+    if await tech.count() == 0:
+        raise SystemExit(f"找不到 vjs-tech，无法执行：{action}")
+    await tech.click(force=True, timeout=PW_TIMEOUT_MS)
+
+
+async def _ensure_playing(page: Page, reason: str) -> None:
+    try:
+        state = await page.evaluate(
+            """async () => {
+                const v = document.querySelector('video.vjs-tech, .vjs-tech');
+                if (!v) return { ok: false, err: 'no-video' };
+                try { v.muted = true; } catch (e) {}
+                try { await v.play(); } catch (e) { return { ok: false, err: String(e), paused: v.paused, readyState: v.readyState, currentTime: v.currentTime }; }
+                return { ok: true, paused: v.paused, readyState: v.readyState, currentTime: v.currentTime };
+            }"""
+        )
+        if isinstance(state, dict) and state.get("ok"):
+            return
+    except Exception:
+        pass
+
+    try:
+        btn = page.locator("button.vjs-play-control").first
+        if await btn.count() != 0:
+            await btn.click(force=True, timeout=PW_TIMEOUT_MS)
+    except Exception:
+        pass
+
+
+async def _set_speed_2x(page: Page) -> None:
+    btn = page.locator(".vjs-playback-rate").first
+    if await btn.count():
+        try:
+            await btn.click(force=True, timeout=PW_TIMEOUT_MS)
+        except Exception:
+            pass
+    await page.wait_for_timeout(200)
+
+    items = page.locator(".vjs-menu-item-text")
+    if await items.count() == 0:
+        raise SystemExit("未找到 vjs-menu-item-text（倍速菜单项）")
+
+    first = items.nth(0)
+    text = ((await first.inner_text()) or "").strip()
+    if text != "2x":
+        raise SystemExit(f"倍速菜单第一项不是 2x，实际为：{text!r}")
+
+    await first.click(force=True, timeout=PW_TIMEOUT_MS)
+
+
+async def _play_and_set_2x(page: Page) -> None:
+    await _wait_player_ready(page)
+
+    await _click_vjs_tech(page, "开始播放")
+    await page.wait_for_timeout(1000)
+
+    await _click_vjs_tech(page, "暂停（1s）")
+    await page.wait_for_timeout(1000)
+
+    await _set_speed_2x(page)
+
+    await _click_vjs_tech(page, "恢复播放（2x）")
+    await _ensure_playing(page, "设置 2x 后恢复播放")
+
+
+async def _is_replay_state(page: Page) -> bool:
+    btn = page.locator("button.vjs-play-control.vjs-control.vjs-button.vjs-paused.vjs-ended").first
+    if await btn.count() == 0:
+        return False
+    title = (await btn.get_attribute("title")) or ""
+    return title.strip() == "Replay"
+
+
+async def _watch_course(page: Page, url: str) -> None:
+    await _play_and_set_2x(page)
+
+    last_cur: int | None = None
+    stalled = 0
+
+    while True:
+        current_text = ""
+        duration_text = ""
+        try:
+            current_text = ((await page.locator(".vjs-current-time-display").first.inner_text()) or "").strip()
+            duration_text = ((await page.locator(".vjs-duration-display").first.inner_text()) or "").strip()
+        except Exception:
+            pass
+
+        cur = _parse_clock_text_to_seconds(current_text)
+        dur = _parse_clock_text_to_seconds(duration_text)
+
+        if cur is not None:
+            if last_cur is None:
+                last_cur = cur
+                stalled = 0
+            else:
+                if cur == last_cur:
+                    stalled += 1
+                else:
+                    stalled = 0
+                    last_cur = cur
+
+        if stalled >= 2:
+            await page.reload(wait_until="domcontentloaded", timeout=15000)
+            await _play_and_set_2x(page)
+            stalled = 0
+            last_cur = None
+            await page.wait_for_timeout(10000)
+            continue
+
+        if cur is not None and dur is not None and cur == dur:
+            if await _is_replay_state(page):
+                await page.reload(wait_until="domcontentloaded", timeout=15000)
+                print(f"【{_ts()} {url}已看完。】")
+                return
+
+        await page.wait_for_timeout(10000)
+
+
+async def _close_other_pages(context, keep_page: Page) -> None:
+    for p in list(context.pages):
+        if p is keep_page:
+            continue
+        try:
+            await p.close()
+        except Exception:
+            pass
+
+
+async def main() -> None:
+    load_local_secrets()
+
+    username = os.getenv("DT_CRAWLER_USERNAME") or ""
+    password = os.getenv("DT_CRAWLER_PASSWORD") or ""
+
+    async with async_playwright() as p:
+        endpoint = os.getenv("PLAYWRIGHT_CDP_ENDPOINT", "http://127.0.0.1:53333")
+        browser = await connect_chrome_over_cdp(p, endpoint)
+
+        context = browser.contexts[0] if browser.contexts else await browser.new_context()
+        context.set_default_timeout(PW_TIMEOUT_MS)
+
+        existing = list(context.pages)
+        personal_page = existing[-1] if existing else await context.new_page()
+        try:
+            await personal_page.bring_to_front()
+        except Exception:
+            pass
+
+        await ensure_logged_in(personal_page, username=username, password=password, open_only=False, skip_login=False)
+
+        await _goto_personal_center_in_current_tab(personal_page)
+        if await _print_progress(personal_page):
+            await _close_other_pages(context, personal_page)
+            return
+
+        await _close_other_pages(context, personal_page)
+
+        url_file = _pick_url_file()
+        urls = list(_iter_urls(url_file))
+        if not urls:
+            raise SystemExit(f"未找到任何 https URL：{url_file}")
+
+        prev_course_page: Page | None = None
+
+        for url in urls:
+            course_page = await context.new_page()
+            await course_page.goto(url, wait_until="domcontentloaded", timeout=15000)
+
+            if prev_course_page is not None:
+                await course_page.wait_for_timeout(2000)
+                try:
+                    await prev_course_page.close()
+                except Exception:
+                    pass
+
+            prev_course_page = course_page
+
+            await _watch_course(course_page, url)
+
+            await _refresh_personal_center(personal_page)
+            await personal_page.wait_for_timeout(2000)
+            if await _print_progress(personal_page):
+                return
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
