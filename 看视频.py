@@ -356,7 +356,7 @@ async def main(argv: list[str] | None = None) -> None:
 
         for line_no, url in items:
             course_page = await context.new_page()
-            _log(f"具体看了第 {line_no} 行的课程：{url}")
+            _log(f"第 {line_no} 行课程：{url}")
             _log(f"新标签打开课程：{url}")
             await course_page.goto(url, wait_until="domcontentloaded", timeout=15000)
 
