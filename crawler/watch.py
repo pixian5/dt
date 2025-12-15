@@ -179,8 +179,21 @@ async def _print_progress(page: Page) -> bool:
 
 async def _goto_personal_center_in_current_tab(page: Page) -> None:
     await page.wait_for_timeout(1000)
-    _log(f"在当前标签打开个人中心：{PERSONAL_CENTER_URL}")
-    await page.goto(PERSONAL_CENTER_URL, wait_until="domcontentloaded", timeout=15000)
+    for attempt in range(3):
+        _log(f"在当前标签打开个人中心：{PERSONAL_CENTER_URL}（attempt={attempt + 1}/3）")
+        await page.goto(PERSONAL_CENTER_URL, wait_until="domcontentloaded", timeout=15000)
+
+        try:
+            await page.wait_for_selector(".plan-all.pro", state="attached", timeout=5000)
+        except Exception:
+            pass
+
+        if "/index" not in page.url:
+            if await page.locator(".plan-all.pro").count() != 0:
+                return
+
+        _log(f"个人中心未就绪或疑似被重定向（url={page.url!r}），1s 后重试")
+        await page.wait_for_timeout(1000)
 
 
 async def _refresh_personal_center(page: Page) -> None:
