@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import os
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -14,6 +15,10 @@ PERSONAL_CENTER_URL = "https://gbwlxy.dtdjzx.gov.cn/content#/personalCenter"
 
 def _ts() -> str:
     return datetime.now().strftime("%H:%M:%S")
+
+
+def _ts_full() -> str:
+    return datetime.now().strftime("%Y-%m-%d-%H:%M:%S")
 
 
 def _log(msg: str) -> None:
@@ -168,7 +173,7 @@ async def _print_progress(page: Page) -> bool:
             return False
 
         if "100%" in text:
-            print(f"【{_ts()}-已看完100%】")
+            print(f"【{_ts_full()}-已看完100%】")
             return True
         if text != "0%":
             return False
@@ -179,21 +184,18 @@ async def _print_progress(page: Page) -> bool:
 
 async def _goto_personal_center_in_current_tab(page: Page) -> None:
     await page.wait_for_timeout(1000)
-    for attempt in range(3):
-        _log(f"在当前标签打开个人中心：{PERSONAL_CENTER_URL}（attempt={attempt + 1}/3）")
-        await page.goto(PERSONAL_CENTER_URL, wait_until="domcontentloaded", timeout=15000)
+    _log(f"在当前标签打开个人中心：{PERSONAL_CENTER_URL}")
+    await page.goto(PERSONAL_CENTER_URL, wait_until="domcontentloaded", timeout=15000)
 
-        try:
-            await page.wait_for_selector(".plan-all.pro", state="attached", timeout=5000)
-        except Exception:
-            pass
-
-        if "/index" not in page.url:
-            if await page.locator(".plan-all.pro").count() != 0:
-                return
-
-        _log(f"个人中心未就绪或疑似被重定向（url={page.url!r}），1s 后重试")
-        await page.wait_for_timeout(1000)
+    start = time.monotonic()
+    while time.monotonic() - start < 3:
+        if "personalCenter" not in (page.url or ""):
+            _log(f"检测到个人中心被跳转（url={page.url!r}），立即跳回个人中心")
+            try:
+                await page.goto(PERSONAL_CENTER_URL, wait_until="domcontentloaded", timeout=15000)
+            except Exception:
+                pass
+        await page.wait_for_timeout(500)
 
 
 async def _refresh_personal_center(page: Page) -> None:
@@ -258,7 +260,20 @@ async def _set_speed_2x(page: Page) -> None:
     if text != "2x":
         raise SystemExit(f"倍速菜单第一项不是 2x，实际为：{text!r}")
 
-    await first.click(force=True, timeout=PW_TIMEOUT_MS)
+    try:
+        await first.click(force=True, timeout=PW_TIMEOUT_MS)
+        return
+    except Exception:
+        pass
+
+    try:
+        parent = first.locator("xpath=..")
+        await parent.click(force=True, timeout=PW_TIMEOUT_MS)
+        return
+    except Exception:
+        pass
+
+    await first.evaluate("(el) => el.click()")
 
 
 async def _play_and_set_2x(page: Page) -> None:
@@ -302,12 +317,15 @@ async def _recover_course_page(page: Page, url: str, reason: str) -> None:
         _log(f"重新打开课程链接仍失败（err={exc}），稍后继续尝试")
 
 
-async def _watch_course(page: Page, url: str) -> None:
+async def _watch_course(
+    context, page: Page, url: str, course_no: int, personal_page: Page
+) -> tuple[Page | None, bool]:
     _log(f"进入课程页，开始播放流程：{url}")
     await _play_and_set_2x(page)
 
     last_cur: int | None = None
     stalled = 0
+    stall_stage = 0
 
     while True:
         current_text = ""
@@ -342,14 +360,44 @@ async def _watch_course(page: Page, url: str) -> None:
                 else:
                     stalled = 0
                     last_cur = cur
+                    stall_stage = 0
 
         if stalled >= 2:
-            _log(f"播放疑似卡住（连续{stalled}次时间未变化，cur={cur}），刷新页面并重试播放初始化")
-            await _recover_course_page(page, url, "播放疑似卡住")
-            try:
-                await _play_and_set_2x(page)
-            except Exception as exc:
-                _log(f"重试播放初始化失败（err={exc}），稍后继续检测")
+            if stall_stage == 0:
+                _log(f"播放疑似卡住（连续{stalled}次时间未变化），刷新页面并重试播放初始化")
+                await _recover_course_page(page, url, "播放疑似卡住")
+                try:
+                    await _play_and_set_2x(page)
+                except Exception as exc:
+                    _log(f"重试播放初始化失败（err={exc}），稍后继续检测")
+                stall_stage = 1
+            elif stall_stage == 1:
+                _log("播放仍卡住：关闭当前标签页，新标签页重试播放初始化")
+                try:
+                    await page.close()
+                except Exception:
+                    pass
+                page = await context.new_page()
+                await page.goto(url, wait_until="domcontentloaded", timeout=15000)
+                await _close_other_pages(context, {personal_page, page})
+                try:
+                    await _play_and_set_2x(page)
+                except Exception as exc:
+                    _log(f"新标签页播放初始化失败（err={exc}），继续下一课程")
+                    try:
+                        await page.close()
+                    except Exception:
+                        pass
+                    return None, False
+                stall_stage = 2
+            else:
+                _log("播放多次卡住仍无法恢复：跳过该课程，播放下一个")
+                try:
+                    await page.close()
+                except Exception:
+                    pass
+                return None, False
+
             stalled = 0
             last_cur = None
             await page.wait_for_timeout(10000)
@@ -361,15 +409,15 @@ async def _watch_course(page: Page, url: str) -> None:
                     await page.reload(wait_until="domcontentloaded", timeout=60000)
                 except Exception:
                     pass
-                print(f"【{_ts()} {url}已看完。】")
-                return
+                print(f"【{_ts_full()} 第{course_no}个课程 {url} 已看完。】")
+                return page, True
 
         await page.wait_for_timeout(10000)
 
 
-async def _close_other_pages(context, keep_page: Page) -> None:
+async def _close_other_pages(context, keep_pages: set[Page]) -> None:
     for p in list(context.pages):
-        if p is keep_page:
+        if p in keep_pages:
             continue
         try:
             await p.close()
@@ -401,12 +449,15 @@ async def main(argv: list[str] | None = None) -> None:
 
         await ensure_logged_in(personal_page, username=username, password=password, open_only=False, skip_login=False)
 
+        await _close_other_pages(context, {personal_page})
+
         await _goto_personal_center_in_current_tab(personal_page)
+        await personal_page.wait_for_timeout(1000)
         if await _print_progress(personal_page):
-            await _close_other_pages(context, personal_page)
+            await _close_other_pages(context, {personal_page})
             return
 
-        await _close_other_pages(context, personal_page)
+        await _close_other_pages(context, {personal_page})
 
         url_file = Path(str(args.url_file)) if args.url_file else _pick_url_file()
         items = list(_iter_urls(url_file, lines_range=args.lines))
@@ -417,11 +468,16 @@ async def main(argv: list[str] | None = None) -> None:
 
         prev_course_page: Page | None = None
 
-        for line_no, url in items:
+        for course_no, (line_no, url) in enumerate(items, start=1):
             course_page = await context.new_page()
             _log(f"第 {line_no} 行课程：{url}")
             _log(f"新标签打开课程：{url}")
             await course_page.goto(url, wait_until="domcontentloaded", timeout=15000)
+
+            if prev_course_page is not None:
+                await _close_other_pages(context, {personal_page, course_page, prev_course_page})
+            else:
+                await _close_other_pages(context, {personal_page, course_page})
 
             if prev_course_page is not None:
                 await course_page.wait_for_timeout(2000)
@@ -432,13 +488,19 @@ async def main(argv: list[str] | None = None) -> None:
 
             prev_course_page = course_page
 
-            await _watch_course(course_page, url)
+            course_page, completed = await _watch_course(context, course_page, url, course_no, personal_page)
+            prev_course_page = course_page
 
             _log("课程结束：刷新个人中心检查进度")
             await _refresh_personal_center(personal_page)
             await personal_page.wait_for_timeout(2000)
             if await _print_progress(personal_page):
                 return
+
+            if prev_course_page is not None:
+                await _close_other_pages(context, {personal_page, prev_course_page})
+            else:
+                await _close_other_pages(context, {personal_page})
 
 
 if __name__ == "__main__":
