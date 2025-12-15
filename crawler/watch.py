@@ -14,7 +14,8 @@ PERSONAL_CENTER_URL = "https://gbwlxy.dtdjzx.gov.cn/content#/personalCenter"
 
 
 def _ts() -> str:
-    return datetime.now().strftime("%H:%M:%S")
+    now = datetime.now()
+    return f"{now.day}日{now.strftime('%H:%M:%S')}"
 
 
 def _ts_full() -> str:
@@ -159,15 +160,9 @@ async def _read_progress_text(page: Page) -> str:
 
 async def _print_progress(page: Page) -> bool:
     for attempt in range(3):
-        if attempt > 0:
-            _log("进度为 0%，1s 后刷新个人中心并重新检查")
-            await page.wait_for_timeout(1000)
-            await _refresh_personal_center(page)
-            await page.wait_for_timeout(2000)
-
         text = await _read_progress_text(page)
         if text:
-            _log(f"个人中心进度（url={page.url!r}）：{text}")
+            _log(f"个人中心进度：{text}")
         else:
             _log(f"个人中心进度读取失败（url={page.url!r}）")
             return False
@@ -175,8 +170,14 @@ async def _print_progress(page: Page) -> bool:
         if "100%" in text:
             print(f"【{_ts_full()}-已看完100%】")
             return True
-        if text != "0%":
+
+        if text.strip() not in {"0", "0%"}:
             return False
+
+        if attempt < 2:
+            _log("进度为 0/0%，刷新后等待2s重新检查")
+            await _refresh_personal_center(page)
+            await page.wait_for_timeout(2000)
 
     _log("个人中心进度多次刷新仍为 0%，放弃继续刷新")
     return False
