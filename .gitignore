@@ -67,6 +67,8 @@ data/login_result.png
 
 # Secrets
 secrets.local.env
+storage_state.json
+url.txt
 
 # IDE
 .DS_Store
