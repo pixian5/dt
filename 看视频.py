@@ -16,6 +16,10 @@ def _ts() -> str:
     return datetime.now().strftime("%Y-%m-%d-%H:%M:%S")
 
 
+def _log(msg: str) -> None:
+    print(f"[{_ts()}] {msg}")
+
+
 def _pick_url_file() -> Path:
     candidates = [Path("URL.txt"), Path("url.txt")]
     for p in candidates:
@@ -130,20 +134,33 @@ async def _read_progress_text(page: Page) -> str:
 
 
 async def _print_progress(page: Page) -> bool:
-    text = await _read_progress_text(page)
-    if text:
-        print(f"[{_ts()}] 当前进度：{text}")
-    else:
-        print(f"[{_ts()}] 当前进度读取失败")
+    for attempt in range(3):
+        if attempt > 0:
+            _log("进度为 0%，1s 后刷新个人中心并重新检查")
+            await page.wait_for_timeout(1000)
+            await _refresh_personal_center(page)
+            await page.wait_for_timeout(2000)
 
-    if "100%" in (text or ""):
-        print(f"【{_ts()}-已看完100%】")
-        return True
+        text = await _read_progress_text(page)
+        if text:
+            _log(f"个人中心进度（url={page.url!r}）：{text}")
+        else:
+            _log(f"个人中心进度读取失败（url={page.url!r}）")
+            return False
+
+        if "100%" in text:
+            print(f"【{_ts()}-已看完100%】")
+            return True
+        if text != "0%":
+            return False
+
+    _log("个人中心进度多次刷新仍为 0%，放弃继续刷新")
     return False
 
 
 async def _goto_personal_center_in_current_tab(page: Page) -> None:
     await page.wait_for_timeout(1000)
+    _log(f"在当前标签打开个人中心：{PERSONAL_CENTER_URL}")
     await page.goto(PERSONAL_CENTER_URL, wait_until="domcontentloaded", timeout=15000)
 
 
@@ -215,14 +232,18 @@ async def _set_speed_2x(page: Page) -> None:
 async def _play_and_set_2x(page: Page) -> None:
     await _wait_player_ready(page)
 
+    _log("点击 vjs-tech：开始播放")
     await _click_vjs_tech(page, "开始播放")
     await page.wait_for_timeout(1000)
 
+    _log("点击 vjs-tech：暂停（1s）")
     await _click_vjs_tech(page, "暂停（1s）")
     await page.wait_for_timeout(1000)
 
+    _log("设置倍速：点击第一个 vjs-menu-item-text（期望 2x）")
     await _set_speed_2x(page)
 
+    _log("点击 vjs-tech：恢复播放（2x）")
     await _click_vjs_tech(page, "恢复播放（2x）")
     await _ensure_playing(page, "设置 2x 后恢复播放")
 
@@ -236,6 +257,7 @@ async def _is_replay_state(page: Page) -> bool:
 
 
 async def _watch_course(page: Page, url: str) -> None:
+    _log(f"进入课程页：{url}")
     await _play_and_set_2x(page)
 
     last_cur: int | None = None
@@ -265,6 +287,7 @@ async def _watch_course(page: Page, url: str) -> None:
                     last_cur = cur
 
         if stalled >= 2:
+            _log(f"播放疑似卡住（连续{stalled}次时间未变化，cur={cur}），刷新页面并重试播放初始化")
             await page.reload(wait_until="domcontentloaded", timeout=15000)
             await _play_and_set_2x(page)
             stalled = 0
@@ -327,10 +350,13 @@ async def main(argv: list[str] | None = None) -> None:
         if not urls:
             raise SystemExit(f"未找到任何 https URL：{url_file}（lines={args.lines!r}）")
 
+        _log(f"读取到课程数量：{len(urls)}（file={str(url_file)!r} lines={args.lines!r}）")
+
         prev_course_page: Page | None = None
 
         for url in urls:
             course_page = await context.new_page()
+            _log(f"新标签打开课程：{url}")
             await course_page.goto(url, wait_until="domcontentloaded", timeout=15000)
 
             if prev_course_page is not None:
@@ -344,6 +370,7 @@ async def main(argv: list[str] | None = None) -> None:
 
             await _watch_course(course_page, url)
 
+            _log("课程结束：刷新个人中心检查进度")
             await _refresh_personal_center(personal_page)
             await personal_page.wait_for_timeout(2000)
             if await _print_progress(personal_page):
