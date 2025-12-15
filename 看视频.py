@@ -303,7 +303,7 @@ async def _watch_course(page: Page, url: str) -> None:
                 if dur is None and isinstance(js_state.get("duration"), (int, float)):
                     dur = int(js_state["duration"])
 
-        _log(f"播放检测：current={current_text!r} duration={duration_text!r}")
+        _log(f"播放检测：current={current_text} duration={duration_text}")
 
         if cur is not None:
             if last_cur is None:
