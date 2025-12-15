@@ -119,6 +119,25 @@ def _parse_clock_text_to_seconds(text: str) -> int | None:
     return None
 
 
+async def _read_video_state_js(page: Page) -> dict | None:
+    try:
+        return await page.evaluate(
+            """() => {
+                const v = document.querySelector('video.vjs-tech');
+                if (!v) return null;
+                return {
+                    currentTime: Number.isFinite(v.currentTime) ? v.currentTime : null,
+                    duration: Number.isFinite(v.duration) ? v.duration : null,
+                    paused: !!v.paused,
+                    ended: !!v.ended,
+                    readyState: v.readyState,
+                };
+            }"""
+        )
+    except Exception:
+        return None
+
+
 async def _read_progress_text(page: Page) -> str:
     loc = page.locator(".plan-all.pro").first
     for _ in range(30):
@@ -274,6 +293,23 @@ async def _watch_course(page: Page, url: str) -> None:
 
         cur = _parse_clock_text_to_seconds(current_text)
         dur = _parse_clock_text_to_seconds(duration_text)
+
+        js_state = None
+        if cur is None or dur is None:
+            js_state = await _read_video_state_js(page)
+            if isinstance(js_state, dict):
+                if cur is None and isinstance(js_state.get("currentTime"), (int, float)):
+                    cur = int(js_state["currentTime"])
+                if dur is None and isinstance(js_state.get("duration"), (int, float)):
+                    dur = int(js_state["duration"])
+
+        if js_state is None:
+            _log(f"播放检测：current={current_text!r} duration={duration_text!r} cur={cur} dur={dur}")
+        else:
+            _log(
+                f"播放检测：current={current_text!r} duration={duration_text!r} cur={cur} dur={dur} "
+                f"js={js_state}"
+            )
 
         if cur is not None:
             if last_cur is None:
