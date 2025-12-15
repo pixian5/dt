@@ -190,29 +190,21 @@ async def ensure_logged_in(
     await page.fill("#username", username)
     await page.fill("#password", password)
 
-    captcha = input("请输入验证码（validateCode）：").strip()
-    if not captcha:
-        raise SystemExit("验证码不能为空")
+    print("【请在网页输入验证码】")
+    print("[INFO] 请在网页中输入验证码并点击登录按钮，程序将每隔 2 秒检查是否已登录")
 
-    try:
-        await page.wait_for_selector("#validateCode", timeout=15000)
-        await page.fill("#validateCode", captcha, timeout=15000)
-    except PlaywrightTimeoutError as exc:
-        if page.url.startswith(MEMBER_URL) or "www.dtdjzx.gov.cn/member" in page.url:
-            print(f"[INFO] 填写验证码时检测到跳转 member（{page.url}），视为已登录")
-            return
-        raise SystemExit(f"填写验证码超时：{exc}") from exc
-    except Exception:
-        if page.url.startswith(MEMBER_URL) or "www.dtdjzx.gov.cn/member" in page.url:
-            print(f"[INFO] 填写验证码时检测到跳转 member（{page.url}），视为已登录")
-            return
-        raise
+    max_wait_seconds = 300
+    for i in range(max_wait_seconds // 2):
+        await page.wait_for_timeout(2000)
 
-    await call_with_timeout_retry(
-        page.wait_for_selector, "等待登录提交按钮", "a.js-submit.tianze-loginbtn", timeout=PW_TIMEOUT_MS
-    )
-    await page.click("a.js-submit.tianze-loginbtn")
-    await page.wait_for_timeout(3000)
+        if page.url.startswith(MEMBER_URL) or "www.dtdjzx.gov.cn/member" in page.url:
+            print(f"[INFO] 已检测到跳转 member（{page.url}），登录成功")
+            return
+
+        if (i + 1) % 10 == 0:
+            print(f"[INFO] 仍未登录，继续等待（{(i + 1) * 2}/{max_wait_seconds}s），当前URL={page.url!r}")
+
+    raise SystemExit(f"等待登录超时（{max_wait_seconds}s）：请确认已在网页输入验证码并点击登录，当前URL={page.url!r}")
     return
 
 
