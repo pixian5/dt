@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 import os
 from datetime import datetime
@@ -23,7 +24,49 @@ def _pick_url_file() -> Path:
     return candidates[-1]
 
 
-def _iter_urls(p: Path):
+def _parse_lines_range(lines_arg: str | None) -> tuple[int | None, int | None]:
+    if not lines_arg:
+        return None, None
+    s = str(lines_arg).strip()
+    if not s:
+        return None, None
+
+    if "-" not in s:
+        try:
+            n = int(s)
+        except Exception as exc:
+            raise SystemExit(f"--lines 参数格式错误：{lines_arg!r}（示例：32 / 32- / 32-34）") from exc
+        if n <= 0:
+            raise SystemExit(f"--lines 行号必须为正整数：{lines_arg!r}")
+        return n, n
+
+    start_s, end_s = [p.strip() for p in s.split("-", 1)]
+    if not start_s:
+        raise SystemExit(f"--lines 参数格式错误：{lines_arg!r}（示例：32- 或 32-34）")
+
+    try:
+        start = int(start_s)
+    except Exception as exc:
+        raise SystemExit(f"--lines 参数格式错误：{lines_arg!r}（示例：32- 或 32-34）") from exc
+    if start <= 0:
+        raise SystemExit(f"--lines 起始行号必须为正整数：{lines_arg!r}")
+
+    if end_s == "":
+        return start, None
+
+    try:
+        end = int(end_s)
+    except Exception as exc:
+        raise SystemExit(f"--lines 参数格式错误：{lines_arg!r}（示例：32- 或 32-34）") from exc
+    if end <= 0:
+        raise SystemExit(f"--lines 结束行号必须为正整数：{lines_arg!r}")
+    if end < start:
+        raise SystemExit(f"--lines 结束行号不能小于起始行号：{lines_arg!r}")
+
+    return start, end
+
+
+def _iter_urls(p: Path, *, lines_range: str | None = None):
     try:
         lines = p.read_text(encoding="utf-8").splitlines()
     except Exception:
@@ -32,13 +75,26 @@ def _iter_urls(p: Path):
         except Exception as exc:
             raise SystemExit(f"无法读取 URL 文件：{p} ({exc})") from exc
 
-    for raw in lines:
+    start, end = _parse_lines_range(lines_range)
+    for idx, raw in enumerate(lines, start=1):
+        if start is not None and idx < start:
+            continue
+        if end is not None and idx > end:
+            break
+
         s = (raw or "").strip()
         if not s:
             continue
         if not s.startswith("https"):
             continue
         yield s
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="看视频：登录→个人中心进度→按 URL.txt/url.txt 逐课播放（2x + 卡住刷新）")
+    parser.add_argument("--url-file", default=None, help="URL 文件路径（默认优先 URL.txt，其次 url.txt）")
+    parser.add_argument("--lines", default=None, help="读取的行范围：32 / 32- / 32-34（按 URL 文件行号）")
+    return parser.parse_args(argv)
 
 
 def _parse_clock_text_to_seconds(text: str) -> int | None:
@@ -235,8 +291,10 @@ async def _close_other_pages(context, keep_page: Page) -> None:
             pass
 
 
-async def main() -> None:
+async def main(argv: list[str] | None = None) -> None:
     load_local_secrets()
+
+    args = parse_args(argv)
 
     username = os.getenv("DT_CRAWLER_USERNAME") or ""
     password = os.getenv("DT_CRAWLER_PASSWORD") or ""
@@ -264,10 +322,10 @@ async def main() -> None:
 
         await _close_other_pages(context, personal_page)
 
-        url_file = _pick_url_file()
-        urls = list(_iter_urls(url_file))
+        url_file = Path(str(args.url_file)) if args.url_file else _pick_url_file()
+        urls = list(_iter_urls(url_file, lines_range=args.lines))
         if not urls:
-            raise SystemExit(f"未找到任何 https URL：{url_file}")
+            raise SystemExit(f"未找到任何 https URL：{url_file}（lines={args.lines!r}）")
 
         prev_course_page: Page | None = None
 
