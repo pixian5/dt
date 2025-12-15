@@ -287,6 +287,23 @@ async def _ensure_playing(page: Page, reason: str) -> None:
         _log(f"点击 vjs-play-control 失败（忽略）：{exc}")
 
 
+async def _restart_playback_after_reload(page: Page, reason: str) -> None:
+    _log(f"播放卡住：刷新页面并重新初始化播放（原因：{reason}）")
+    try:
+        await page.reload(wait_until="domcontentloaded", timeout=15000)
+    except Exception as exc:
+        _log(f"刷新课程页失败（忽略，继续尝试播放初始化）：{exc}")
+
+    await _wait_player_ready(page)
+    await _click_vjs_tech(page, "刷新后：开始播放")
+    await page.wait_for_timeout(1000)
+    await _click_vjs_tech(page, "刷新后：暂停（1s）")
+    await page.wait_for_timeout(1000)
+    await _set_speed_2x(page)
+    await _click_vjs_tech(page, "刷新后：恢复播放（2x）")
+    await _ensure_playing(page, f"刷新后恢复播放：{reason}")
+
+
 async def _set_speed_2x(page: Page) -> None:
     _log("设置倍速：打开倍速菜单")
     btn = page.locator(".vjs-playback-rate").first
@@ -336,6 +353,8 @@ async def _watch_course_page(page: Page, url: str) -> None:
 
     last_cur: int | None = None
     stalled = 0
+    recoveries = 0
+    max_recoveries = 3
 
     while True:
         try:
@@ -366,9 +385,17 @@ async def _watch_course_page(page: Page, url: str) -> None:
                     last_cur = cur
 
         if stalled >= 3:
-            _log(f"播放疑似卡住（连续{stalled}次未前进，cur={cur}），尝试恢复播放")
-            await _ensure_playing(page, f"检测到卡住 cur={cur}")
+            if recoveries >= max_recoveries:
+                raise SystemExit(f"播放多次卡住且已达最大恢复次数 {max_recoveries}，终止当前课程：{url}")
+
+            recoveries += 1
+            _log(
+                f"播放疑似卡住（连续{stalled}次未前进，cur={cur}），"
+                f"执行刷新重启播放（第{recoveries}/{max_recoveries}次）"
+            )
+            await _restart_playback_after_reload(page, reason=f"stalled cur={cur}")
             stalled = 0
+            last_cur = None
 
         if cur is not None and dur is not None and cur == dur:
             replay = await _is_replay_state(page)
