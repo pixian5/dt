@@ -190,8 +190,52 @@ async def ensure_logged_in(
     await page.fill("#username", username)
     await page.fill("#password", password)
 
-    print("【请在网页输入验证码】")
-    print("[INFO] 请在网页中输入验证码并点击登录按钮，程序将每隔 2 秒检查是否已登录")
+    captcha = (await asyncio.to_thread(input, "请输入网页验证码：")).strip()
+    if not captcha:
+        raise SystemExit("验证码不能为空")
+    await page.fill("#validateCode", captcha)
+
+    submitted = False
+    for sel in (
+        'button:has-text("登录")',
+        'button:has-text("登 录")',
+        "button[type=submit]",
+        "input[type=submit]",
+        "#login",
+        "#loginBtn",
+        ".login-btn",
+        ".btn-login",
+    ):
+        try:
+            loc = page.locator(sel).first
+            if await loc.count() != 0:
+                await loc.click(force=True, timeout=PW_TIMEOUT_MS)
+                submitted = True
+                break
+        except Exception:
+            continue
+
+    if not submitted:
+        try:
+            await page.locator("#validateCode").press("Enter", timeout=PW_TIMEOUT_MS)
+            submitted = True
+        except Exception:
+            pass
+
+    if not submitted:
+        try:
+            await page.evaluate(
+                """() => {
+                    const el = document.querySelector('#validateCode');
+                    const form = el ? el.closest('form') : document.querySelector('form');
+                    if (form) { form.submit(); return true; }
+                    return false;
+                }"""
+            )
+        except Exception:
+            pass
+
+    print("[INFO] 已提交登录，程序将每隔 2 秒检查是否已登录")
 
     max_wait_seconds = 30
     for i in range(max_wait_seconds // 2):
