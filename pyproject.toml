@@ -14,8 +14,8 @@ dependencies = [
 ]
 
 [project.scripts]
-dt-crawler = "crawler.main:main"
-dt-crawler-login = "crawler.login:main"
+dt-crawler = "main:main"
+dt-crawler-login = "login:main"
 
 [tool.setuptools]
-packages = ["crawler"]
+py-modules = ["__init__", "config", "get_no_test_urls", "login", "main", "watch"]

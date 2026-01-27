@@ -6,7 +6,7 @@ from pathlib import Path
 
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError, async_playwright, Page
 
-from crawler.login import LOGIN_URL, connect_chrome_over_cdp, ensure_logged_in, load_local_secrets
+from login import LOGIN_URL, connect_chrome_over_cdp, ensure_logged_in, load_local_secrets
 
 
 VIDEO_CARD_SELECTOR = ".video-warp-start"

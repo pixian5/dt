@@ -2,11 +2,7 @@ import sys
 from pathlib import Path
 from typing import List
 
-try:
-    from .login import main as login_main
-except ImportError:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from crawler.login import main as login_main
+from login import main as login_main
 
 
 def main(argv: List[str] | None = None) -> None:

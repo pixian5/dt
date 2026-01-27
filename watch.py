@@ -7,7 +7,7 @@ from pathlib import Path
 
 from playwright.async_api import async_playwright, Page
 
-from crawler.login import PW_TIMEOUT_MS, connect_chrome_over_cdp, ensure_logged_in, load_local_secrets
+from login import PW_TIMEOUT_MS, connect_chrome_over_cdp, ensure_logged_in, load_local_secrets
 
 
 PERSONAL_CENTER_URL = "https://gbwlxy.dtdjzx.gov.cn/content#/personalCenter"
@@ -156,6 +156,36 @@ async def _read_progress_text(page: Page) -> str:
             pass
         await page.wait_for_timeout(1000)
     return ""
+
+
+def _remove_url_from_file(url_file: Path, url: str) -> None:
+    if not url_file.exists() or not url_file.is_file():
+        _log(f"URL 文件不存在，跳过删除：{url_file}")
+        return
+
+    try:
+        lines = url_file.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        try:
+            lines = url_file.read_text(encoding="utf-8-sig").splitlines()
+        except Exception as exc:
+            _log(f"读取 URL 文件失败，跳过删除：{url_file} ({exc})")
+            return
+
+    removed = False
+    new_lines: list[str] = []
+    for raw in lines:
+        if raw.strip() == url:
+            removed = True
+            continue
+        new_lines.append(raw)
+
+    if not removed:
+        _log(f"未在 URL 文件中找到要删除的链接：{url}")
+        return
+
+    url_file.write_text("\n".join(new_lines) + ("\n" if new_lines else ""), encoding="utf-8")
+    _log(f"已从 URL 文件删除：{url}")
 
 
 async def _print_progress(page: Page) -> bool:
@@ -307,26 +337,28 @@ async def _is_replay_state(page: Page) -> bool:
 async def _recover_course_page(page: Page, url: str, reason: str) -> None:
     _log(f"{reason}：尝试刷新页面恢复")
     try:
-        await page.reload(wait_until="domcontentloaded", timeout=60000)
+        await page.reload(wait_until="domcontentloaded", timeout=15000)
         return
     except Exception as exc:
         _log(f"刷新失败，改用重新打开课程链接恢复（err={exc}）")
 
     try:
-        await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+        await page.goto(url, wait_until="domcontentloaded", timeout=15000)
     except Exception as exc:
         _log(f"重新打开课程链接仍失败（err={exc}），稍后继续尝试")
 
 
 async def _watch_course(
     context, page: Page, url: str, course_no: int, personal_page: Page
-) -> tuple[Page | None, bool]:
+) -> tuple[Page | None, str]:
     _log(f"进入课程页，开始播放流程：{url}")
     await _play_and_set_2x(page)
 
     last_cur: int | None = None
-    stalled = 0
-    stall_stage = 0
+    last_progress_ts = time.monotonic()
+    refresh_attempts = 0
+    missing_time_count = 0
+    completion_candidate_ts: float | None = None
 
     while True:
         current_text = ""
@@ -354,64 +386,71 @@ async def _watch_course(
         if cur is not None:
             if last_cur is None:
                 last_cur = cur
-                stalled = 0
-            else:
-                if cur == last_cur:
-                    stalled += 1
-                else:
-                    stalled = 0
-                    last_cur = cur
-                    stall_stage = 0
+                last_progress_ts = time.monotonic()
+                refresh_attempts = 0
+                missing_time_count = 0
+            elif cur != last_cur:
+                last_cur = cur
+                last_progress_ts = time.monotonic()
+                refresh_attempts = 0
+                missing_time_count = 0
+        else:
+            missing_time_count += 1
 
-        if stalled >= 2:
-            if stall_stage == 0:
-                _log(f"播放疑似卡住（连续{stalled}次时间未变化），刷新页面并重试播放初始化")
-                await _recover_course_page(page, url, "播放疑似卡住")
-                try:
-                    await _play_and_set_2x(page)
-                except Exception as exc:
-                    _log(f"重试播放初始化失败（err={exc}），稍后继续检测")
-                stall_stage = 1
-            elif stall_stage == 1:
-                _log("播放仍卡住：关闭当前标签页，新标签页重试播放初始化")
+        if time.monotonic() - last_progress_ts >= 60 or missing_time_count >= 6:
+            if refresh_attempts >= 3:
+                _log("播放多次重试仍未变化：跳过该课程")
                 try:
                     await page.close()
                 except Exception:
                     pass
-                page = await context.new_page()
+                return None, "skipped"
+
+            refresh_attempts += 1
+            if missing_time_count >= 6:
+                _log(f"连续多次无法读取播放时间，关闭当前标签并新标签重试（{refresh_attempts}/3）")
+            else:
+                _log(f"播放 60s 未变化，关闭当前标签并新标签重试（{refresh_attempts}/3）")
+            try:
+                await page.close()
+            except Exception:
+                pass
+            page = await context.new_page()
+            try:
                 await page.goto(url, wait_until="domcontentloaded", timeout=15000)
-                await _close_other_pages(context, {personal_page, page})
-                try:
-                    await _play_and_set_2x(page)
-                except Exception as exc:
-                    _log(f"新标签页播放初始化失败（err={exc}），继续下一课程")
+            except Exception as exc:
+                _log(f"新标签打开课程失败（err={exc}），继续等待下一次检测")
+                last_progress_ts = time.monotonic()
+                last_cur = None
+                continue
+
+            await _close_other_pages(context, {personal_page, page})
+            try:
+                await _play_and_set_2x(page)
+            except Exception as exc:
+                _log(f"新标签播放初始化失败（err={exc}），继续检测")
+
+            last_progress_ts = time.monotonic()
+            last_cur = None
+            missing_time_count = 0
+            completion_candidate_ts = None
+
+        #如果当前时间、总时间都存在，而且当前时间接近总时间，说明可能播放完（播放完成后会卡在最后一秒）
+        ended = bool(js_state.get("ended")) if isinstance(js_state, dict) else False
+        if cur is not None and dur is not None and cur >= max(dur - 1, 88):
+            now_ts = time.monotonic()
+            if completion_candidate_ts is None:
+                completion_candidate_ts = now_ts
+            elif now_ts - completion_candidate_ts >= 3:
+                if ended or await _is_replay_state(page):
                     try:
-                        await page.close()
+                        await page.reload(wait_until="domcontentloaded", timeout=15000)
                     except Exception:
                         pass
-                    return None, False
-                stall_stage = 2
-            else:
-                _log("播放多次卡住仍无法恢复：跳过该课程，播放下一个")
-                try:
-                    await page.close()
-                except Exception:
-                    pass
-                return None, False
-
-            stalled = 0
-            last_cur = None
-            await page.wait_for_timeout(10000)
-            continue
-
-        if cur is not None and dur is not None and cur == dur:
-            if await _is_replay_state(page):
-                try:
-                    await page.reload(wait_until="domcontentloaded", timeout=60000)
-                except Exception:
-                    pass
-                print(f"【{_ts_full()} 第{course_no}个课程 {url} 已看完。】")
-                return page, True
+                    print(f"【{_ts_full()} 第{course_no}个课程 {url} 已看完。】")
+                    return page, "completed"
+        else:
+            completion_candidate_ts = None
 
         await page.wait_for_timeout(10000)
 
@@ -489,8 +528,16 @@ async def main(argv: list[str] | None = None) -> None:
 
             prev_course_page = course_page
 
-            course_page, completed = await _watch_course(context, course_page, url, course_no, personal_page)
+            course_page, status = await _watch_course(context, course_page, url, course_no, personal_page)
             prev_course_page = course_page
+            if status in {"completed", "skipped"}:
+                _remove_url_from_file(url_file, url)
+                if course_page is not None:
+                    try:
+                        await course_page.close()
+                    except Exception:
+                        pass
+                    prev_course_page = None
 
             _log("课程结束：刷新个人中心检查进度")
             await _refresh_personal_center(personal_page)
