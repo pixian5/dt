@@ -181,7 +181,7 @@ async def _read_watched_hours_text(page: Page) -> str:
                     const pickText = (el) => (el && el.textContent ? el.textContent.trim() : "");
                     const hasNumber = (s) => /\\d/.test(s || "");
                     const candidates = Array.from(document.querySelectorAll("*"))
-                        .filter((el) => el.childElementCount === 0 && /已看课时/.test(el.textContent || ""));
+                        .filter((el) => el.childElementCount === 0 && /(已看课时|已完成)/.test(el.textContent || ""));
                     if (!candidates.length) return "";
                     for (const el of candidates.slice(0, 3)) {
                         let cur = el;
@@ -198,7 +198,7 @@ async def _read_watched_hours_text(page: Page) -> str:
             text = (text or "").strip()
             if text:
                 text = re.sub(r"\\s+", " ", text)
-                m = re.search(r"(已看课时\\s*[:：]?\\s*\\d+(?:\\.\\d+)?)", text)
+                m = re.search(r"((?:已看课时|已完成)\\s*[:：]?\\s*\\d+(?:\\.\\d+)?\\s*(?:学时|课时)?)", text)
                 if m:
                     return m.group(1)
                 return text
