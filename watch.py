@@ -347,7 +347,7 @@ async def _print_personal_center_status(page: Page) -> bool:
             await _refresh_personal_center(page)
             await page.wait_for_timeout(2000)
 
-    _log("个人中心进度多次刷新仍为 0%，放弃继续刷新")
+    _log("个人中心进度多次刷新仍为 0%，放弃继续刷新，你可能真没学")
     return False
 
 
@@ -528,6 +528,7 @@ async def _watch_course(
     personal_page: Page,
     state_file: Path,
     refresh_interval: int,
+    completed_hours_cache: float | None,
 ) -> tuple[Page | None, str]:
     if await _has_media_load_error(page):
         _log("检测到媒体加载失败提示，跳过该课程")
@@ -577,6 +578,8 @@ async def _watch_course(
                     dur = int(js_state["duration"])
 
         _log(f"current={current_text} duration={duration_text}")
+        if completed_hours_cache is not None:
+            _log(f"已完成学时(看完本课后)：{_format_hours_value(completed_hours_cache)}")
 
         if cur is not None:
             if last_cur is None:
@@ -717,6 +720,7 @@ async def main(argv: list[str] | None = None) -> None:
         _log(f"读取到课程数量：{len(items)}（file={str(url_file)!r} lines={args.lines!r}）")
 
         prev_course_page: Page | None = None
+        completed_hours_cache: float | None = None
 
         for course_no, (line_no, url) in enumerate(items, start=1):
             course_page = await context.new_page()
@@ -745,6 +749,7 @@ async def main(argv: list[str] | None = None) -> None:
                 personal_page,
                 STATE_FILE,
                 int(args.refresh_interval),
+                completed_hours_cache,
             )
             prev_course_page = course_page
             if status in {"completed", "skipped"}:
@@ -766,7 +771,7 @@ async def main(argv: list[str] | None = None) -> None:
             before_hours = await _read_watched_hours_value(personal_page)
             done_before = await _print_progress(personal_page)
             if before_hours is not None:
-                _log(f"已完成学时(刷新前)：{_format_hours_value(before_hours)}课时")
+                _log(f"已完成学时(看完本课前)：{_format_hours_value(before_hours)}课时")
                 _append_watched_diff(url, before_hours, label="刷新前")
 
             _log("刷新个人中心并显示最新已看课时")
@@ -775,12 +780,15 @@ async def main(argv: list[str] | None = None) -> None:
             after_hours = await _read_watched_hours_value(personal_page)
             done_after = await _print_progress(personal_page)
             if after_hours is not None:
-                _log(f"已完成学时(刷新后)：{_format_hours_value(after_hours)}课时")
+                _log(f"已完成学时(看完本课后)：{_format_hours_value(after_hours)}课时")
                 _append_watched_diff(url, after_hours, label="刷新后")
+                completed_hours_cache = after_hours
+            elif before_hours is not None:
+                completed_hours_cache = before_hours
 
             if before_hours is not None and after_hours is not None:
                 diff_hours = after_hours - before_hours
-                _log(f"已完成学时差值：{_format_hours_value(diff_hours)}课时")
+                _log(f"看完本课給你增加了：{_format_hours_value(diff_hours)}课时")
                 _append_watched_diff(url, diff_hours, label="差值")
             else:
                 _log("已看课时差值计算失败：无法读取刷新前后课时")
