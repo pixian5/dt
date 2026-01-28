@@ -181,7 +181,7 @@ async def _read_watched_hours_text(page: Page) -> str:
                     const pickText = (el) => (el && el.textContent ? el.textContent.trim() : "");
                     const hasNumber = (s) => /\\d/.test(s || "");
                     const candidates = Array.from(document.querySelectorAll("*"))
-                        .filter((el) => el.childElementCount === 0 && /(已看课时|已完成)/.test(el.textContent || ""));
+                        .filter((el) => el.childElementCount === 0 && /已完成/.test(el.textContent || ""));
                     if (!candidates.length) return "";
                     for (const el of candidates.slice(0, 3)) {
                         let cur = el;
@@ -198,10 +198,23 @@ async def _read_watched_hours_text(page: Page) -> str:
             text = (text or "").strip()
             if text:
                 text = re.sub(r"\\s+", " ", text)
-                m = re.search(r"((?:已看课时|已完成)\\s*[:：]?\\s*\\d+(?:\\.\\d+)?\\s*(?:学时|课时)?)", text)
+                m = re.search(r"(已完成\\s*[:：]?\\s*\\d+(?:\\.\\d+)?\\s*(?:学时|课时)?)", text)
                 if m:
                     return m.group(1)
                 return text
+            # Fallback: scan full page text
+            body_text = await page.evaluate(
+                """() => {
+                    const t = document.body ? (document.body.innerText || '') : '';
+                    return t;
+                }"""
+            )
+            body_text = (body_text or "").strip()
+            if body_text:
+                body_text = re.sub(r"\\s+", " ", body_text)
+                m = re.search(r"(已完成\\s*[:：]?\\s*\\d+(?:\\.\\d+)?\\s*(?:学时|课时)?)", body_text)
+                if m:
+                    return m.group(1)
         except Exception:
             pass
         await page.wait_for_timeout(1000)
@@ -256,9 +269,9 @@ async def _print_personal_center_status(page: Page) -> bool:
         watched_hours = await _read_watched_hours_text(page)
         value = _parse_hours_from_text(watched_hours)
         if value is not None:
-            _log(f"个人中心已看课时：{_format_hours_value(value)}")
+            _log(f"个人中心已完成学时：{_format_hours_value(value)}")
         else:
-            _log("个人中心已看课时读取失败")
+            _log("个人中心已完成学时读取失败")
 
         if "100%" in progress_text:
             print(f"【{_ts_full()}-已看完100%】")
