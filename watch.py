@@ -455,7 +455,7 @@ async def _watch_course(
             pass
         return None, "skipped"
 
-    _log(f"进入课程页，开始播放流程：{url}")
+    _log("进入课程页，开始播放")
     await _play_and_set_2x(page)
 
     last_cur: int | None = None
@@ -622,8 +622,7 @@ async def main(argv: list[str] | None = None) -> None:
 
         for course_no, (line_no, url) in enumerate(items, start=1):
             course_page = await context.new_page()
-            _log(f"第 {line_no} 行课程：{url}")
-            _log(f"新标签打开课程：{url}")
+            _log(f"新标签打开课程：\n{url}")
             await course_page.goto(url, wait_until="domcontentloaded", timeout=15000)
 
             if prev_course_page is not None:
