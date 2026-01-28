@@ -250,7 +250,13 @@ async def _read_watched_hours_text(page: Page) -> str:
 def _parse_hours_from_text(text: str) -> float | None:
     if not text:
         return None
-    m = re.search(r"(\\d+(?:\\.\\d+)?)", text)
+    if isinstance(text, list):
+        for item in text:
+            val = _parse_hours_from_text(item)
+            if val is not None:
+                return val
+        return None
+    m = re.search(r"(\\d+(?:\\.\\d+)?)", str(text))
     if not m:
         return None
     try:
