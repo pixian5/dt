@@ -176,45 +176,14 @@ async def _read_progress_text(page: Page) -> str:
 async def _read_watched_hours_text(page: Page) -> str:
     for _ in range(30):
         try:
-            text = await page.evaluate(
-                """() => {
-                    const pickText = (el) => (el && el.textContent ? el.textContent.trim() : "");
-                    const hasNumber = (s) => /\\d/.test(s || "");
-                    const candidates = Array.from(document.querySelectorAll("*"))
-                        .filter((el) => el.childElementCount === 0 && /已完成/.test(el.textContent || ""));
-                    if (!candidates.length) return "";
-                    for (const el of candidates.slice(0, 3)) {
-                        let cur = el;
-                        for (let i = 0; i < 3 && cur; i += 1) {
-                            const t = pickText(cur);
-                            if (t && hasNumber(t)) return t;
-                            cur = cur.parentElement;
-                        }
-                    }
-                    const t = pickText(candidates[0]);
-                    return t;
-                }"""
-            )
-            text = (text or "").strip()
+            xpath = '//*[@id="domhtml"]/div[2]/div/section/div/div[2]/div[1]/div[1]/div[1]/div[2]/div[2]/div[2]/div[2]'
+            text = ((await page.locator(xpath).first.inner_text()) or "").strip()
             if text:
                 text = re.sub(r"\\s+", " ", text)
                 m = re.search(r"(已完成\\s*[:：]?\\s*\\d+(?:\\.\\d+)?\\s*(?:学时|课时)?)", text)
                 if m:
                     return m.group(1)
                 return text
-            # Fallback: scan full page text
-            body_text = await page.evaluate(
-                """() => {
-                    const t = document.body ? (document.body.innerText || '') : '';
-                    return t;
-                }"""
-            )
-            body_text = (body_text or "").strip()
-            if body_text:
-                body_text = re.sub(r"\\s+", " ", body_text)
-                m = re.search(r"(已完成\\s*[:：]?\\s*\\d+(?:\\.\\d+)?\\s*(?:学时|课时)?)", body_text)
-                if m:
-                    return m.group(1)
         except Exception:
             pass
         await page.wait_for_timeout(1000)
