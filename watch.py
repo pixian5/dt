@@ -176,14 +176,37 @@ async def _read_progress_text(page: Page) -> str:
 async def _read_watched_hours_text(page: Page) -> str:
     for _ in range(30):
         try:
+            await page.wait_for_timeout(2000)
             xpath = '//*[@id="domhtml"]/div[2]/div/section/div/div[2]/div[1]/div[1]/div[1]/div[2]/div[2]/div[2]/div[2]'
-            text = ((await page.locator(xpath).first.inner_text()) or "").strip()
-            if text:
-                text = re.sub(r"\\s+", " ", text)
-                m = re.search(r"(已完成\\s*[:：]?\\s*\\d+(?:\\.\\d+)?\\s*(?:学时|课时)?)", text)
+            loc = page.locator(xpath).first
+            if await loc.count():
+                text = ((await loc.inner_text()) or "").strip()
+                if text:
+                    text = re.sub(r"\\s+", " ", text)
+                    m = re.search(r"(已完成\\s*[:：]?\\s*\\d+(?:\\.\\d+)?\\s*(?:学时|课时)?)", text)
+                    if m:
+                        return m.group(1)
+                    return text
+
+            # fallback: scan main page + frames
+            frames = [page] + list(page.frames)
+            for fr in frames:
+                try:
+                    body_text = await fr.evaluate(
+                        """() => {
+                            const t = document.body ? (document.body.innerText || '') : '';
+                            return t;
+                        }"""
+                    )
+                except Exception:
+                    continue
+                body_text = (body_text or "").strip()
+                if not body_text:
+                    continue
+                body_text = re.sub(r"\\s+", " ", body_text)
+                m = re.search(r"(已完成\\s*[:：]?\\s*\\d+(?:\\.\\d+)?\\s*(?:学时|课时)?)", body_text)
                 if m:
                     return m.group(1)
-                return text
         except Exception:
             pass
         await page.wait_for_timeout(1000)
