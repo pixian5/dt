@@ -7,11 +7,25 @@
 - 按 `url.txt` 逐课播放并自动检查个人中心进度（播放完成/跳过会自动从 `url.txt` 删除）。
 
 ## 快速开始（Python 3.10+）
+macOS / Windows / Linux 均可用（创建/激活命令不同）
 1. 创建虚拟环境并安装依赖：
    ```bash
+   # macOS / Linux
    python3 -m venv .venv
    source .venv/bin/activate
-   pip install -r requirements.txt
+   # 激活后，`python`/`pip` 指向虚拟环境。
+   python -m pip install -r requirements.txt
+   python -m playwright install
+   ```
+   ```powershell
+   # Windows (PowerShell)
+   py -3 -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   # 如果没有 `py`，请使用 `python` 或把 Python 加入 PATH。
+   # python -m venv .venv
+   # .\.venv\Scripts\Activate.ps1
+   # 激活后，`python`/`pip` 指向虚拟环境。
+   python -m pip install -r requirements.txt
    python -m playwright install
    ```
 2. 启动可被 Playwright 连接的 Chrome（若 53333 未启动，程序会自动启动一个带 CDP 的独立实例）：
@@ -26,6 +40,22 @@
      # Ubuntu
      google-chrome --remote-debugging-port=53333 --user-data-dir="$HOME/.config/chrome-cdp-53333"
      ```
+
+## 一键启动（跨平台）
+脚本会自动创建/激活虚拟环境、安装依赖与 Playwright，并运行 `watch.py`（可带参数）。
+- 推荐（统一脚本，自动在 venv 中重启）：
+  ```bash
+  python start.py
+  ```
+- 备选：
+  - macOS / Linux：
+    ```bash
+    ./start.sh
+    ```
+  - Windows（CMD）：
+    ```bat
+    start.cmd
+    ```
 
 ## 使用方式
 ### 1) 登录（保存登录态）
