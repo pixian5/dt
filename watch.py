@@ -8,10 +8,12 @@ import re
 
 from playwright.async_api import async_playwright, Page
 
-from login import PW_TIMEOUT_MS, connect_chrome_over_cdp, ensure_logged_in, load_local_secrets
+from login import PW_TIMEOUT_MS, connect_chrome_over_cdp, ensure_logged_in, load_local_secrets, _save_storage_state
 
 
 PERSONAL_CENTER_URL = "https://gbwlxy.dtdjzx.gov.cn/content#/personalCenter"
+STATE_FILE = Path(os.getenv("DT_STORAGE_STATE_FILE", "storage_state.json"))
+DEFAULT_REFRESH_INTERVAL = 30
 
 
 def _ts() -> str:
@@ -105,6 +107,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="看视频：登录→个人中心进度→按 URL.txt/url.txt 逐课播放（2x + 卡住刷新）")
     parser.add_argument("--url-file", default=None, help="URL 文件路径（默认优先 URL.txt，其次 url.txt）")
     parser.add_argument("--lines", default=None, help="读取的行范围：32 / 32- / 32-34（按 URL 文件行号）")
+    parser.add_argument(
+        "--refresh-interval",
+        type=int,
+        default=DEFAULT_REFRESH_INTERVAL,
+        help=f"播放页定时刷新间隔（秒，默认 {DEFAULT_REFRESH_INTERVAL}）",
+    )
     return parser.parse_args(argv)
 
 
@@ -512,7 +520,13 @@ async def _recover_course_page(page: Page, url: str, reason: str) -> None:
 
 
 async def _watch_course(
-    context, page: Page, url: str, course_no: int, personal_page: Page
+    context,
+    page: Page,
+    url: str,
+    course_no: int,
+    personal_page: Page,
+    state_file: Path,
+    refresh_interval: int,
 ) -> tuple[Page | None, str]:
     if await _has_media_load_error(page):
         _log("检测到媒体加载失败提示，跳过该课程")
@@ -530,6 +544,7 @@ async def _watch_course(
     refresh_attempts = 0
     missing_time_count = 0
     completion_candidate_ts: float | None = None
+    periodic_refresh_ts = time.monotonic()
 
     while True:
         if await _has_media_load_error(page):
@@ -576,6 +591,20 @@ async def _watch_course(
         else:
             missing_time_count += 1
 
+        if refresh_interval > 0 and time.monotonic() - periodic_refresh_ts >= refresh_interval:
+            _log(f"每隔{refresh_interval}s刷新播放页面并重新播放")
+            await _recover_course_page(page, url, "定时刷新")
+            try:
+                await _play_and_set_2x(page)
+            except Exception as exc:
+                _log(f"定时刷新后重播失败（err={exc}）")
+            try:
+                await _save_storage_state(context, state_file)
+                _log(f"已保存登录态：{state_file}")
+            except Exception as exc:
+                _log(f"保存登录态失败：{exc}")
+            periodic_refresh_ts = time.monotonic()
+
         if time.monotonic() - last_progress_ts >= 60 or missing_time_count >= 6:
             if refresh_attempts >= 3:
                 _log("播放多次重试仍未变化：跳过该课程")
@@ -613,6 +642,7 @@ async def _watch_course(
             last_cur = None
             missing_time_count = 0
             completion_candidate_ts = None
+            periodic_refresh_ts = time.monotonic()
 
         #如果当前时间、总时间都存在，而且当前时间接近总时间，说明可能播放完（播放完成后会卡在最后一秒）
         ended = bool(js_state.get("ended")) if isinstance(js_state, dict) else False
@@ -706,7 +736,15 @@ async def main(argv: list[str] | None = None) -> None:
 
             prev_course_page = course_page
 
-            course_page, status = await _watch_course(context, course_page, url, course_no, personal_page)
+            course_page, status = await _watch_course(
+                context,
+                course_page,
+                url,
+                course_no,
+                personal_page,
+                STATE_FILE,
+                int(args.refresh_interval),
+            )
             prev_course_page = course_page
             if status in {"completed", "skipped"}:
                 _remove_url_from_file(url_file, url)
