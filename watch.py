@@ -254,12 +254,9 @@ async def _print_personal_center_status(page: Page) -> bool:
             return False
 
         watched_hours = await _read_watched_hours_text(page)
-        if watched_hours:
-            value = _parse_hours_from_text(watched_hours)
-            if value is not None:
-                _log(f"个人中心已看课时：{_format_hours_value(value)}")
-            else:
-                _log(f"个人中心已看课时：{watched_hours}")
+        value = _parse_hours_from_text(watched_hours)
+        if value is not None:
+            _log(f"个人中心已看课时：{_format_hours_value(value)}")
         else:
             _log("个人中心已看课时读取失败")
 
