@@ -269,6 +269,26 @@ def _format_hours_value(value: float) -> str:
     return s.rstrip("0").rstrip(".")
 
 
+async def _debug_log_plan_all_y(page: Page) -> None:
+    texts: list[str] = []
+    frames = [page] + list(page.frames)
+    for fr in frames:
+        try:
+            loc = fr.locator(".plan-all-y")
+            if await loc.count():
+                items = await loc.all_inner_texts()
+                for t in items:
+                    t = (t or "").strip()
+                    if t:
+                        texts.append(t)
+        except Exception:
+            continue
+    if texts:
+        _log(f"plan-all-y 内容：{texts}")
+    else:
+        _log("plan-all-y 内容为空")
+
+
 def _append_watched_diff(url: str, diff_hours: float) -> None:
     p = Path("已看")
     try:
@@ -298,6 +318,7 @@ async def _print_personal_center_status(page: Page) -> bool:
             _log(f"个人中心已完成学时：{_format_hours_value(value)}")
         else:
             _log("个人中心已完成学时读取失败")
+            await _debug_log_plan_all_y(page)
 
         if "100%" in progress_text:
             print(f"【{_ts_full()}-已看完100%】")
