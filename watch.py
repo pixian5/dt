@@ -208,8 +208,7 @@ async def _read_watched_hours_text(page: Page) -> str:
     return ""
 
 
-async def _read_watched_hours_value(page: Page) -> float | None:
-    text = await _read_watched_hours_text(page)
+def _parse_hours_from_text(text: str) -> float | None:
     if not text:
         return None
     m = re.search(r"(\\d+(?:\\.\\d+)?)", text)
@@ -219,6 +218,11 @@ async def _read_watched_hours_value(page: Page) -> float | None:
         return float(m.group(1))
     except Exception:
         return None
+
+
+async def _read_watched_hours_value(page: Page) -> float | None:
+    text = await _read_watched_hours_text(page)
+    return _parse_hours_from_text(text)
 
 
 def _format_hours_value(value: float) -> str:
@@ -251,11 +255,11 @@ async def _print_personal_center_status(page: Page) -> bool:
 
         watched_hours = await _read_watched_hours_text(page)
         if watched_hours:
-            value = await _read_watched_hours_value(page)
+            value = _parse_hours_from_text(watched_hours)
             if value is not None:
-                _log(f"已看课时：{_format_hours_value(value)}")
+                _log(f"个人中心已看课时：{_format_hours_value(value)}")
             else:
-                _log(f"个人已看课时：{watched_hours}")
+                _log(f"个人中心已看课时：{watched_hours}")
         else:
             _log("个人中心已看课时读取失败")
 
