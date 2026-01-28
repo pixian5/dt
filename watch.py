@@ -177,8 +177,7 @@ async def _read_watched_hours_text(page: Page) -> str:
     for _ in range(30):
         try:
             await page.wait_for_timeout(2000)
-            xpath = '//*[@id="domhtml"]/div[2]/div/section/div/div[2]/div[1]/div[1]/div[1]/div[2]/div[2]/div[2]/div[2]'
-            loc = page.locator(xpath).first
+            loc = page.locator(".plan-right .plan-all-y").first
             if await loc.count():
                 text = ((await loc.inner_text()) or "").strip()
                 if text:
@@ -207,6 +206,16 @@ async def _read_watched_hours_text(page: Page) -> str:
                 m = re.search(r"(已完成\\s*[:：]?\\s*\\d+(?:\\.\\d+)?\\s*(?:学时|课时)?)", body_text)
                 if m:
                     return m.group(1)
+
+            # last resort: evaluate at page context without frames list
+            try:
+                raw_text = await page.evaluate("() => document.body ? (document.body.innerText || '') : ''")
+                raw_text = re.sub(r"\\s+", " ", (raw_text or "").strip())
+                m = re.search(r"(已完成\\s*[:：]?\\s*\\d+(?:\\.\\d+)?\\s*(?:学时|课时)?)", raw_text)
+                if m:
+                    return m.group(1)
+            except Exception:
+                pass
         except Exception:
             pass
         await page.wait_for_timeout(1000)
