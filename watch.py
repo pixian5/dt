@@ -580,6 +580,8 @@ async def _watch_course(
         _log(f"current={current_text} duration={duration_text}")
         if completed_hours_cache is not None:
             _log(f"已完成学时(看完本课后)：{_format_hours_value(completed_hours_cache)}")
+        else:
+            _log("已完成学时(看完本课后)：未知")
 
         if cur is not None:
             if last_cur is None:
@@ -706,6 +708,7 @@ async def main(argv: list[str] | None = None) -> None:
 
         await _goto_personal_center_in_current_tab(personal_page)
         await personal_page.wait_for_timeout(1000)
+        initial_hours = await _read_watched_hours_value(personal_page)
         if await _print_progress(personal_page):
             await _close_other_pages(context, {personal_page})
             return
@@ -720,7 +723,7 @@ async def main(argv: list[str] | None = None) -> None:
         _log(f"读取到课程数量：{len(items)}（file={str(url_file)!r} lines={args.lines!r}）")
 
         prev_course_page: Page | None = None
-        completed_hours_cache: float | None = None
+        completed_hours_cache: float | None = initial_hours
 
         for course_no, (line_no, url) in enumerate(items, start=1):
             course_page = await context.new_page()
