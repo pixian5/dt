@@ -176,16 +176,21 @@ async def _read_progress_text(page: Page) -> str:
 async def _read_watched_hours_text(page: Page) -> str:
     for _ in range(30):
         try:
-            await page.wait_for_timeout(2000)
-            loc = page.locator(".plan-right .plan-all-y").first
-            if await loc.count():
-                text = ((await loc.inner_text()) or "").strip()
-                if text:
-                    text = re.sub(r"\\s+", " ", text)
-                    m = re.search(r"(已完成\\s*[:：]?\\s*\\d+(?:\\.\\d+)?\\s*(?:学时|课时)?)", text)
-                    if m:
-                        return m.group(1)
-                    return text
+            await page.wait_for_timeout(500)
+            frames = [page] + list(page.frames)
+            for fr in frames:
+                try:
+                    loc = fr.locator(".plan-right .plan-all-y, .plan-all-y").first
+                    if await loc.count():
+                        text = ((await loc.inner_text(timeout=1000)) or "").strip()
+                        if text:
+                            text = re.sub(r"\\s+", " ", text)
+                            m = re.search(r"(已完成\\s*[:：]?\\s*\\d+(?:\\.\\d+)?\\s*(?:学时|课时)?)", text)
+                            if m:
+                                return m.group(1)
+                            return text
+                except Exception:
+                    continue
 
             # fallback: scan main page + frames
             frames = [page] + list(page.frames)
