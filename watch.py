@@ -174,6 +174,12 @@ async def _read_progress_text(page: Page) -> str:
 
 
 async def _read_watched_hours_text(page: Page) -> str:
+    # First, try waiting briefly for the specific element to appear.
+    try:
+        await page.wait_for_selector(".plan-all-y", timeout=15000)
+    except Exception:
+        pass
+
     for _ in range(30):
         try:
             await page.wait_for_timeout(500)
@@ -189,6 +195,20 @@ async def _read_watched_hours_text(page: Page) -> str:
                             if m:
                                 return m.group(1)
                             return text
+                except Exception:
+                    continue
+
+            # fallback: read container text if present
+            for fr in frames:
+                try:
+                    container = fr.locator(".plan-right").first
+                    if await container.count():
+                        t = ((await container.inner_text(timeout=1000)) or "").strip()
+                        if t:
+                            t = re.sub(r"\\s+", " ", t)
+                            m = re.search(r"(已完成\\s*[:：]?\\s*\\d+(?:\\.\\d+)?\\s*(?:学时|课时)?)", t)
+                            if m:
+                                return m.group(1)
                 except Exception:
                     continue
 
