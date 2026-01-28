@@ -9,21 +9,21 @@ import smtplib
 from email.mime.text import MIMEText
 from playwright.async_api import async_playwright, Page
 
+# 默认播放页定时刷新间隔（秒）
+DEFAULT_REFRESH_INTERVAL = 300
+
 from login import (
     LOGIN_URL,
     MEMBER_URL,
+    PERSONAL_CENTER_URL,
     PW_TIMEOUT_MS,
     connect_chrome_over_cdp,
     ensure_logged_in,
     load_local_secrets,
     _save_storage_state,
 )
-
-
-PERSONAL_CENTER_URL = "https://gbwlxy.dtdjzx.gov.cn/content#/personalCenter"
 STATE_FILE = Path(os.getenv("DT_STORAGE_STATE_FILE", "storage_state.json"))
-# 默认播放页定时刷新间隔（秒）
-DEFAULT_REFRESH_INTERVAL = 300
+
 
 #发邮件提醒
 def send_email(subject, body, to_email='ibjxk0@gmail.com'):
@@ -645,12 +645,12 @@ async def _watch_course(
             missing_time_count += 1
 
         if post_refresh_check and cur is not None:
-            if cur < 20:
+            if cur < 66:
                 await _check_login_or_exit(page, url)
                 small_start_count += 1
-                _log(f"定时刷新后起始时间<20s（第{small_start_count}次）")
-                if small_start_count >= 3:
-                    _log("连续3次刷新后起始时间<20s，判定已看完本课，跳过该课程")
+                _log(f"定时刷新后起始时间<66s（第{small_start_count}次）")
+                if small_start_count >= 2:
+                    _log("连续2次刷新后起始时间<66s，判定已看完本课，跳过该课程")
                     try:
                         await page.close()
                     except Exception:
