@@ -255,8 +255,9 @@ def _parse_hours_from_text(text: str) -> float | None:
             val = _parse_hours_from_text(item)
             if val is not None:
                 return val
-        return None
-    m = re.search(r"(\\d+(?:\\.\\d+)?)", str(text))
+        joined = " ".join(str(x) for x in text if x)
+        return _parse_hours_from_text(joined)
+    m = re.search(r"(\d+(?:\.\d+)?)", str(text))
     if not m:
         return None
     try:
@@ -275,7 +276,7 @@ def _format_hours_value(value: float) -> str:
     return s.rstrip("0").rstrip(".")
 
 
-async def _debug_log_plan_all_y(page: Page) -> None:
+async def _read_plan_all_y_texts(page: Page) -> list[str]:
     texts: list[str] = []
     frames = [page] + list(page.frames)
     for fr in frames:
@@ -284,15 +285,12 @@ async def _debug_log_plan_all_y(page: Page) -> None:
             if await loc.count():
                 items = await loc.all_inner_texts()
                 for t in items:
-                    t = (t or "").strip()
+                    t = re.sub(r"\s+", " ", (t or "").strip())
                     if t:
                         texts.append(t)
         except Exception:
             continue
-    if texts:
-        _log(f"plan-all-y 内容：{texts}")
-    else:
-        _log("plan-all-y 内容为空")
+    return texts
 
 
 def _append_watched_diff(url: str, diff_hours: float) -> None:
@@ -320,11 +318,13 @@ async def _print_personal_center_status(page: Page) -> bool:
 
         watched_hours = await _read_watched_hours_text(page)
         value = _parse_hours_from_text(watched_hours)
+        if value is None:
+            plan_texts = await _read_plan_all_y_texts(page)
+            value = _parse_hours_from_text(plan_texts)
         if value is not None:
             _log(f"个人中心已完成学时：{_format_hours_value(value)}")
         else:
             _log("个人中心已完成学时读取失败")
-            await _debug_log_plan_all_y(page)
 
         if "100%" in progress_text:
             print(f"【{_ts_full()}-已看完100%】")
