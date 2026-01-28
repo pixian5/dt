@@ -145,6 +145,20 @@ async def _read_video_state_js(page: Page) -> dict | None:
         return None
 
 
+async def _has_media_load_error(page: Page) -> bool:
+    try:
+        text = (
+            (await page.locator('//*[@id="vjs_video_433"]/div[5]/div').first.inner_text())
+            if await page.locator('//*[@id="vjs_video_433"]/div[5]/div').count()
+            else ""
+        )
+        return (
+            "The media could not be loaded, either because the server or network failed or because the format is not supported."
+            in (text or "")
+        )
+    except Exception:
+        return False
+
 async def _read_progress_text(page: Page) -> str:
     loc = page.locator(".plan-all.pro").first
     for _ in range(30):
@@ -429,6 +443,14 @@ async def _recover_course_page(page: Page, url: str, reason: str) -> None:
 async def _watch_course(
     context, page: Page, url: str, course_no: int, personal_page: Page
 ) -> tuple[Page | None, str]:
+    if await _has_media_load_error(page):
+        _log("检测到媒体加载失败提示，跳过该课程")
+        try:
+            await page.close()
+        except Exception:
+            pass
+        return None, "skipped"
+
     _log(f"进入课程页，开始播放流程：{url}")
     await _play_and_set_2x(page)
 
@@ -439,6 +461,14 @@ async def _watch_course(
     completion_candidate_ts: float | None = None
 
     while True:
+        if await _has_media_load_error(page):
+            _log("播放过程中检测到媒体加载失败提示，跳过该课程")
+            try:
+                await page.close()
+            except Exception:
+                pass
+            return None, "skipped"
+
         current_text = ""
         duration_text = ""
         try:
