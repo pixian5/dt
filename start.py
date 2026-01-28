@@ -20,7 +20,7 @@ def _venv_python() -> Path:
 
 
 def _in_venv() -> bool:
-    return os.environ.get("VIRTUAL_ENV") or (getattr(sys, "base_prefix", sys.prefix) != sys.prefix)
+    return bool(os.environ.get("VIRTUAL_ENV")) or (getattr(sys, "base_prefix", sys.prefix) != sys.prefix)
 
 
 def _run(cmd: list[str], *, env: dict[str, str] | None = None) -> None:

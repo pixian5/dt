@@ -4,6 +4,7 @@ import os
 import time
 from datetime import datetime
 from pathlib import Path
+import re
 
 from playwright.async_api import async_playwright, Page
 
@@ -158,6 +159,104 @@ async def _read_progress_text(page: Page) -> str:
     return ""
 
 
+async def _read_watched_hours_text(page: Page) -> str:
+    for _ in range(30):
+        try:
+            text = await page.evaluate(
+                """() => {
+                    const pickText = (el) => (el && el.textContent ? el.textContent.trim() : "");
+                    const hasNumber = (s) => /\\d/.test(s || "");
+                    const candidates = Array.from(document.querySelectorAll("*"))
+                        .filter((el) => el.childElementCount === 0 && /已看课时/.test(el.textContent || ""));
+                    if (!candidates.length) return "";
+                    for (const el of candidates.slice(0, 3)) {
+                        let cur = el;
+                        for (let i = 0; i < 3 && cur; i += 1) {
+                            const t = pickText(cur);
+                            if (t && hasNumber(t)) return t;
+                            cur = cur.parentElement;
+                        }
+                    }
+                    const t = pickText(candidates[0]);
+                    return t;
+                }"""
+            )
+            text = (text or "").strip()
+            if text:
+                text = re.sub(r"\\s+", " ", text)
+                m = re.search(r"(已看课时\\s*[:：]?\\s*\\d+(?:\\.\\d+)?)", text)
+                if m:
+                    return m.group(1)
+                return text
+        except Exception:
+            pass
+        await page.wait_for_timeout(1000)
+    return ""
+
+
+async def _read_watched_hours_value(page: Page) -> float | None:
+    text = await _read_watched_hours_text(page)
+    if not text:
+        return None
+    m = re.search(r"(\\d+(?:\\.\\d+)?)", text)
+    if not m:
+        return None
+    try:
+        return float(m.group(1))
+    except Exception:
+        return None
+
+
+def _format_hours_value(value: float) -> str:
+    s = f"{value:.2f}"
+    return s.rstrip("0").rstrip(".")
+
+
+def _append_watched_diff(url: str, diff_hours: float) -> None:
+    p = Path("已看")
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    text = f"{_ts_full()}\\n{url}\\n{_format_hours_value(diff_hours)}课时\\n\\n"
+    try:
+        with p.open("a", encoding="utf-8") as f:
+            f.write(text)
+    except Exception as exc:
+        _log(f"写入已看文件失败：{exc}")
+
+
+async def _print_personal_center_status(page: Page) -> bool:
+    for attempt in range(3):
+        progress_text = await _read_progress_text(page)
+        if progress_text:
+            _log(f"个人中心进度：{progress_text}")
+        else:
+            _log(f"个人中心进度读取失败（url={page.url!r}）")
+            return False
+
+        watched_hours = await _read_watched_hours_text(page)
+        if watched_hours:
+            _log(f"个人中心已看课时：{watched_hours}")
+        else:
+            _log("个人中心已看课时读取失败")
+
+        if "100%" in progress_text:
+            print(f"【{_ts_full()}-已看完100%】")
+            return True
+
+        if progress_text.strip() not in {"0", "0%"}:
+            return False
+
+        if attempt < 2:
+            _log("进度为 0/0%，刷新后等待2s重新检查")
+            await _refresh_personal_center(page)
+            await page.wait_for_timeout(2000)
+
+    _log("个人中心进度多次刷新仍为 0%，放弃继续刷新")
+    return False
+
+
 def _remove_url_from_file(url_file: Path, url: str) -> None:
     if not url_file.exists() or not url_file.is_file():
         _log(f"URL 文件不存在，跳过删除：{url_file}")
@@ -189,28 +288,7 @@ def _remove_url_from_file(url_file: Path, url: str) -> None:
 
 
 async def _print_progress(page: Page) -> bool:
-    for attempt in range(3):
-        text = await _read_progress_text(page)
-        if text:
-            _log(f"个人中心进度：{text}")
-        else:
-            _log(f"个人中心进度读取失败（url={page.url!r}）")
-            return False
-
-        if "100%" in text:
-            print(f"【{_ts_full()}-已看完100%】")
-            return True
-
-        if text.strip() not in {"0", "0%"}:
-            return False
-
-        if attempt < 2:
-            _log("进度为 0/0%，刷新后等待2s重新检查")
-            await _refresh_personal_center(page)
-            await page.wait_for_timeout(2000)
-
-    _log("个人中心进度多次刷新仍为 0%，放弃继续刷新")
-    return False
+    return await _print_personal_center_status(page)
 
 
 async def _goto_personal_center_in_current_tab(page: Page) -> None:
@@ -539,10 +617,30 @@ async def main(argv: list[str] | None = None) -> None:
                         pass
                     prev_course_page = None
 
-            _log("课程结束：刷新个人中心检查进度")
+            _log("课程结束：打开个人中心并显示当前已看课时")
+            try:
+                await personal_page.bring_to_front()
+            except Exception:
+                pass
+            await _goto_personal_center_in_current_tab(personal_page)
+            await personal_page.wait_for_timeout(1000)
+            before_hours = await _read_watched_hours_value(personal_page)
+            done_before = await _print_progress(personal_page)
+
+            _log("刷新个人中心并显示最新已看课时")
             await _refresh_personal_center(personal_page)
             await personal_page.wait_for_timeout(2000)
-            if await _print_progress(personal_page):
+            after_hours = await _read_watched_hours_value(personal_page)
+            done_after = await _print_progress(personal_page)
+
+            if before_hours is not None and after_hours is not None:
+                diff_hours = after_hours - before_hours
+                _log(f"已看课时差值：{_format_hours_value(diff_hours)}课时")
+                _append_watched_diff(url, diff_hours)
+            else:
+                _log("已看课时差值计算失败：无法读取刷新前后课时")
+
+            if done_after or done_before:
                 return
 
             if prev_course_page is not None:
