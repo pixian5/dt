@@ -5,10 +5,19 @@ import time
 from datetime import datetime
 from pathlib import Path
 import re
-
+import smtplib
+from email.mime.text import MIMEText
 from playwright.async_api import async_playwright, Page
 
-from login import PW_TIMEOUT_MS, connect_chrome_over_cdp, ensure_logged_in, load_local_secrets, _save_storage_state
+from login import (
+    LOGIN_URL,
+    MEMBER_URL,
+    PW_TIMEOUT_MS,
+    connect_chrome_over_cdp,
+    ensure_logged_in,
+    load_local_secrets,
+    _save_storage_state,
+)
 
 
 PERSONAL_CENTER_URL = "https://gbwlxy.dtdjzx.gov.cn/content#/personalCenter"
@@ -16,6 +25,21 @@ STATE_FILE = Path(os.getenv("DT_STORAGE_STATE_FILE", "storage_state.json"))
 # 默认播放页定时刷新间隔（秒）
 DEFAULT_REFRESH_INTERVAL = 300
 
+#发邮件提醒
+def send_email(subject, body, to_email='ibjxk0@gmail.com'):
+    from_email = "hqlak47@gmail.com"
+    password = "zkgamebmeqnyxwlj"
+
+    msg = MIMEText(body, "plain", "utf-8")
+    msg["Subject"] = subject
+    msg["From"] = from_email
+    msg["To"] = to_email
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(from_email, password)
+            server.sendmail(from_email, to_email, msg.as_string())
+    except Exception as e:
+        print(f"邮件发送失败: {e}")
 
 def _ts() -> str:
     now = datetime.now()
@@ -520,6 +544,27 @@ async def _recover_course_page(page: Page, url: str, reason: str) -> None:
         _log(f"重新打开课程链接仍失败（err={exc}），稍后继续尝试")
 
 
+async def _check_login_or_exit(page: Page, course_url: str) -> None:
+    try:
+        await page.goto(MEMBER_URL, wait_until="domcontentloaded", timeout=15000)
+    except Exception:
+        pass
+
+    if page.url.startswith(LOGIN_URL) or "sso/login" in (page.url or ""):
+        _log("检测到登录失效，发送邮件提醒并退出")
+        try:
+            send_email("登录失效提醒", f"检测到登录失效，请重新登录。\n当前URL={page.url}")
+        except Exception as exc:
+            _log(f"发送邮件失败：{exc}")
+        raise SystemExit("登录失效，已发送提醒邮件")
+
+    try:
+        await page.goto(course_url, wait_until="domcontentloaded", timeout=15000)
+        await _play_and_set_2x(page)
+    except Exception:
+        pass
+
+
 async def _watch_course(
     context,
     page: Page,
@@ -547,6 +592,8 @@ async def _watch_course(
     missing_time_count = 0
     completion_candidate_ts: float | None = None
     periodic_refresh_ts = time.monotonic()
+    post_refresh_check = False
+    small_start_count = 0
 
     while True:
         if await _has_media_load_error(page):
@@ -579,9 +626,9 @@ async def _watch_course(
 
         _log(f"current={current_text} duration={duration_text}")
         if completed_hours_cache is not None:
-            _log(f"已完成学时(看完本课后)：{_format_hours_value(completed_hours_cache)}")
+            print(f"已看学时：{_format_hours_value(completed_hours_cache)}")
         else:
-            _log("已完成学时(看完本课后)：未知")
+            print("已看学时：未知")
 
         if cur is not None:
             if last_cur is None:
@@ -597,6 +644,22 @@ async def _watch_course(
         else:
             missing_time_count += 1
 
+        if post_refresh_check and cur is not None:
+            if cur < 20:
+                await _check_login_or_exit(page, url)
+                small_start_count += 1
+                _log(f"定时刷新后起始时间<20s（第{small_start_count}次）")
+                if small_start_count >= 3:
+                    _log("连续3次刷新后起始时间<20s，判定已看完本课，跳过该课程")
+                    try:
+                        await page.close()
+                    except Exception:
+                        pass
+                    return None, "completed"
+            else:
+                small_start_count = 0
+            post_refresh_check = False
+
         if refresh_interval > 0 and time.monotonic() - periodic_refresh_ts >= refresh_interval:
             _log(f"每隔{refresh_interval}s刷新播放页面并重新播放")
             await _recover_course_page(page, url, "定时刷新")
@@ -610,6 +673,7 @@ async def _watch_course(
             except Exception as exc:
                 _log(f"保存登录态失败：{exc}")
             periodic_refresh_ts = time.monotonic()
+            post_refresh_check = True
 
         if time.monotonic() - last_progress_ts >= 60 or missing_time_count >= 6:
             if refresh_attempts >= 3:

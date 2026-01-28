@@ -30,7 +30,7 @@ async def connect_chrome_over_cdp(p, endpoint: str):
             open_extensions = False
             if os.getenv("CHROME_CDP_USER_DATA_DIR"):
                 user_data_dir = os.getenv("CHROME_CDP_USER_DATA_DIR")
-                user_data_dir = os.path.expanduser(user_data_dir)
+                user_data_dir = os.path.expanduser(os.path.expandvars(user_data_dir or ""))
                 print(f"[INFO] 使用 CHROME_CDP_USER_DATA_DIR：{user_data_dir}")
             else:
                 src_profile = _default_chrome_user_data_dir()
@@ -166,7 +166,7 @@ def _find_chrome_executable() -> str | None:
 
 
 def _launch_chrome_with_cdp(user_data_dir: str) -> None:
-    user_data_dir = os.path.expanduser(user_data_dir)
+    user_data_dir = os.path.expanduser(os.path.expandvars(user_data_dir or ""))
     if sys.platform == "darwin":
         subprocess.Popen(
             [
@@ -345,8 +345,10 @@ async def ensure_logged_in(
             return
         raise
 
-    await page.fill("#username", username)
-    await page.fill("#password", password)
+    if username:
+        await page.fill("#username", username)
+    if password:
+        await page.fill("#password", password)
 
     captcha_task = asyncio.create_task(asyncio.to_thread(input, "请输入网页验证码："))
     while True:
@@ -541,9 +543,9 @@ def main(argv: list[str] | None = None) -> None:
     password = args.password or os.getenv("DT_CRAWLER_PASSWORD") or ""
     if not skip_login:
         if not username or not password:
-            raise SystemExit(
-                "缺少登录信息：请通过参数 --username/--password，或环境变量 DT_CRAWLER_USERNAME/DT_CRAWLER_PASSWORD，"
-                "或在项目根目录创建 secrets.local.env 提供"
+            print(
+                "[WARN] 缺少登录信息：请通过参数 --username/--password，或环境变量 "
+                "DT_CRAWLER_USERNAME/DT_CRAWLER_PASSWORD，或在项目根目录创建 secrets.local.env 提供"
             )
     state_file = Path(str(args.state_file))
     load_state = not bool(args.no_load_state)
