@@ -247,7 +247,7 @@ async def _read_watched_hours_text(page: Page) -> str:
     return ""
 
 
-def _parse_hours_from_text(text: str) -> float | None:
+def _parse_hours_from_text(text: str | list[str]) -> float | None:
     if not text:
         return None
     if isinstance(text, list):
@@ -293,13 +293,13 @@ async def _read_plan_all_y_texts(page: Page) -> list[str]:
     return texts
 
 
-def _append_watched_diff(url: str, diff_hours: float) -> None:
+def _append_watched_diff(url: str, diff_hours: float, label: str = "差值") -> None:
     p = Path("已看")
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
     except Exception:
         pass
-    text = f"{_ts_full()}\\n{url}\\n{_format_hours_value(diff_hours)}课时\\n\\n"
+    text = f"{_ts_full()}\\n{url}\\n{label}:{_format_hours_value(diff_hours)}课时\\n\\n"
     try:
         with p.open("a", encoding="utf-8") as f:
             f.write(text)
@@ -726,17 +726,23 @@ async def main(argv: list[str] | None = None) -> None:
             await personal_page.wait_for_timeout(1000)
             before_hours = await _read_watched_hours_value(personal_page)
             done_before = await _print_progress(personal_page)
+            if before_hours is not None:
+                _log(f"已完成学时(刷新前)：{_format_hours_value(before_hours)}课时")
+                _append_watched_diff(url, before_hours, label="刷新前")
 
             _log("刷新个人中心并显示最新已看课时")
             await _refresh_personal_center(personal_page)
             await personal_page.wait_for_timeout(2000)
             after_hours = await _read_watched_hours_value(personal_page)
             done_after = await _print_progress(personal_page)
+            if after_hours is not None:
+                _log(f"已完成学时(刷新后)：{_format_hours_value(after_hours)}课时")
+                _append_watched_diff(url, after_hours, label="刷新后")
 
             if before_hours is not None and after_hours is not None:
                 diff_hours = after_hours - before_hours
-                _log(f"已看课时差值：{_format_hours_value(diff_hours)}课时")
-                _append_watched_diff(url, diff_hours)
+                _log(f"已完成学时差值：{_format_hours_value(diff_hours)}课时")
+                _append_watched_diff(url, diff_hours, label="差值")
             else:
                 _log("已看课时差值计算失败：无法读取刷新前后课时")
 
