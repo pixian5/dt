@@ -13,7 +13,8 @@ from login import PW_TIMEOUT_MS, connect_chrome_over_cdp, ensure_logged_in, load
 
 PERSONAL_CENTER_URL = "https://gbwlxy.dtdjzx.gov.cn/content#/personalCenter"
 STATE_FILE = Path(os.getenv("DT_STORAGE_STATE_FILE", "storage_state.json"))
-DEFAULT_REFRESH_INTERVAL = 30
+# 默认播放页定时刷新间隔（秒）
+DEFAULT_REFRESH_INTERVAL = 300
 
 
 def _ts() -> str:
