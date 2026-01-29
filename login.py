@@ -721,8 +721,6 @@ async def ensure_logged_in(page: Page, username: str, password: str, open_only: 
             continue
         login_attempts += 1
         _safe_print(f"[INFO] 识别验证码是{code}，第{login_attempts}次尝试登录")
-        if login_attempts >= max_login_attempts:
-            break
         await page.fill("#validateCode", code)
         await _submit_login_form(page)
         await page.wait_for_timeout(1500)
