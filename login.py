@@ -485,13 +485,10 @@ def _build_captcha_variants(img_bytes: bytes) -> list[tuple[str, "ImageType"]]:
     variants: list[tuple[str, "ImageType"]] = []
     _add_variant(variants, "raw", raw)
     _add_variant(variants, "raw_sharp", raw.filter(ImageFilter.SHARPEN))
-    _add_variant(variants, "raw_inv", ImageOps.invert(raw))
-    for thr in (120, 140, 160, 180):
+    for thr in (160, 180, 200, 220):
         bin_img = raw.point(lambda x, t=thr: 0 if x < t else 255)
         bin_img = bin_img.filter(ImageFilter.MedianFilter(size=3))
         _add_variant(variants, f"bin_{thr}", bin_img)
-    for scale in (2, 3):
-        _add_variant(variants, f"raw_x{scale}", raw.resize((raw.width * scale, raw.height * scale)))
     if cv2 is not None and np is not None:
         try:
             arr = np.array(raw, dtype=np.uint8)
@@ -511,8 +508,6 @@ def _build_captcha_variants(img_bytes: bytes) -> list[tuple[str, "ImageType"]]:
                 lines = cv2.morphologyEx(adap, cv2.MORPH_OPEN, line_kernel)
                 no_line = cv2.subtract(adap, lines)
                 _add_variant(variants, "adaptive_noline", Image.fromarray(no_line))
-                no_line_inv = cv2.bitwise_not(no_line)
-                _add_variant(variants, "adaptive_noline_inv", Image.fromarray(no_line_inv))
             except Exception:
                 pass
             try:
@@ -538,8 +533,6 @@ def _build_captcha_variants(img_bytes: bytes) -> list[tuple[str, "ImageType"]]:
                 lines = cv2.bitwise_or(h_lines, v_lines)
                 no_lines = cv2.subtract(adap_blur, lines)
                 _add_variant(variants, "adaptive_blur_noline", Image.fromarray(no_lines))
-                no_lines_inv = cv2.bitwise_not(no_lines)
-                _add_variant(variants, "adaptive_blur_noline_inv", Image.fromarray(no_lines_inv))
                 close = cv2.morphologyEx(no_lines, cv2.MORPH_CLOSE, np.ones((2, 2), np.uint8))
                 _add_variant(variants, "adaptive_blur_noline_close", Image.fromarray(close))
             except Exception:
@@ -554,7 +547,7 @@ def _ocr_captcha_bytes(img_bytes: bytes, *, debug: bool = False, debug_dir: Path
     try:
         preferred = None
         for tag, img in variants:
-            if tag == "bin_140":
+            if tag == "otsu_dilate":
                 preferred = (tag, img)
                 break
         if preferred is not None:
@@ -647,14 +640,14 @@ async def _solve_captcha_text(page: Page) -> tuple[str, Path | None]:
         img_path = debug_dir / f"{ts}_原图.png"
         img_path.write_bytes(img_bytes)
         print(f"[INFO] 已保存验证码截图: {img_path}")
-        processed_path = _save_variant_image(img_bytes, "bin_140", debug_dir, ts)
+        processed_path = _save_variant_image(img_bytes, "otsu_dilate", debug_dir, ts)
         if processed_path:
             img_path = processed_path
     except Exception as exc:
         img_path = None
         debug_dir = None
         print(f"[WARN] 保存验证码截图失败: {exc}")
-    code = _ocr_captcha_bytes(img_bytes, debug=True, debug_dir=debug_dir)
+    code = _ocr_captcha_bytes(img_bytes, debug=False, debug_dir=debug_dir)
     if len(code) != 4:
         return code, img_path
     return code, img_path
