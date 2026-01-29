@@ -696,6 +696,7 @@ async def ensure_logged_in(page: Page, username: str, password: str, open_only: 
     if password:
         await page.fill("#password", password)
     login_attempts = 0
+    max_login_attempts = 5
     while True:
         if _is_logged_in_by_url(page):
             print(f"[INFO] 检测到跳转 member（{page.url}），登录成功")
@@ -720,6 +721,8 @@ async def ensure_logged_in(page: Page, username: str, password: str, open_only: 
             continue
         login_attempts += 1
         _safe_print(f"[INFO] 识别验证码是{code}，第{login_attempts}次尝试登录")
+        if login_attempts >= max_login_attempts:
+            break
         await page.fill("#validateCode", code)
         await _submit_login_form(page)
         await page.wait_for_timeout(1500)
@@ -728,10 +731,11 @@ async def ensure_logged_in(page: Page, username: str, password: str, open_only: 
             print(f"[INFO] 登录成功：{page.url}")
             return
         if await _has_captcha_error(page):
-            login_attempts += 1
             safe_code = re.sub(r"[^A-Z0-9]", "?", str(code))
             _safe_print(f"[WARN] 验证码错误，点击验证码图片刷新后重试（{login_attempts}/{max_login_attempts}）：{safe_code!r}")
             _mark_captcha_image(img_path, "验证码错误", safe_code)
+            if login_attempts >= max_login_attempts:
+                break
             try:
                 await page.locator("#yanzhengma").click()
             except Exception:
