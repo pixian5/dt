@@ -750,6 +750,7 @@ async def ensure_logged_in(page: Page, username: str, password: str, open_only: 
         except Exception:
             pass
         await page.wait_for_timeout(800)
+        continue
     print(f"[WARN] OCR 登录失败 {max_login_attempts} 次，转人工输入")
     if not sys.stdin.isatty() or os.getenv("DT_ALLOW_MANUAL", "1") != "1":
         print("[WARN] 当前为非交互模式或已禁用人工输入，跳过人工输入")
