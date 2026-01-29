@@ -5,6 +5,9 @@ __pycache__/
 
 # Virtual environments
 .venv/
+.venv311/
+.venv*/
+captcha_debug/
 
 # Distribution / packaging
 .Python
