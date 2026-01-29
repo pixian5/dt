@@ -310,8 +310,10 @@ async def _wait_for_login(page: Page, *, interval_seconds: int = 2) -> None:
 def _is_logged_in_by_url(page: Page) -> bool:
     return page.url.startswith(MEMBER_URL) or "www.dtdjzx.gov.cn/member" in page.url
 _paddle_ocr = None
+_ocr_warmed = False
 def _ensure_ocr_ready() -> None:
     global _paddle_ocr
+    global _ocr_warmed
     if PaddleOCR is None or Image is None or ImageFilter is None or ImageOps is None or np is None:
         raise SystemExit("缺少 OCR 依赖，请安装 paddleocr/paddlepaddle/pillow/numpy")
     try:
@@ -352,6 +354,14 @@ def _ensure_ocr_ready() -> None:
             print(f"[INFO] PaddleOCR init params: {kwargs}" + (f", version={ver}" if ver else ""))
         except Exception:
             _paddle_ocr = PaddleOCR(lang="en")
+    if _paddle_ocr is not None and not _ocr_warmed:
+        try:
+            # Warm up once to avoid first-call empty OCR results.
+            warm = Image.new("L", (10, 10), 255)
+            _run_ocr_on_array(np.array(warm))
+        except Exception:
+            pass
+        _ocr_warmed = True
 def _normalize_captcha(text: str, expected_len: int = 4) -> str:
     raw = re.sub(r"[^A-Z0-9]", "", (text or "").upper())
     if expected_len <= 0:
@@ -692,7 +702,7 @@ async def ensure_logged_in(page: Page, username: str, password: str, open_only: 
         await page.fill("#username", username)
     if password:
         await page.fill("#password", password)
-    max_login_attempts = 5
+    max_login_attempts = 20
     login_attempts = 0
     while login_attempts < max_login_attempts:
         if _is_logged_in_by_url(page):
