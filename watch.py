@@ -345,6 +345,14 @@ def _append_watched_diff(url: str, diff_hours: float, label: str = "差值") -> 
 
 async def _print_personal_center_status(context, page: Page) -> tuple[bool, Page]:
     for attempt in range(3):
+        # 若不在个人中心路由，先跳回
+        if "personalCenter" not in (page.url or ""):
+            try:
+                await page.goto(PERSONAL_CENTER_URL, wait_until="domcontentloaded", timeout=15000)
+            except Exception:
+                pass
+            await page.wait_for_timeout(800)
+
         progress_text = await _read_progress_text(page)
         if progress_text:
             _log(f"个人中心进度：{progress_text}")
@@ -428,15 +436,19 @@ async def _goto_personal_center_in_current_tab(page: Page) -> None:
         await page.wait_for_timeout(500)
 
 
-async def _refresh_personal_center(context, page: Page) -> Page:
-    # Close the current personal center tab and open a new one to avoid cached state.
-    try:
-        await page.close()
-    except Exception:
-        pass
+async def _refresh_personal_center(context, page: Page | None, refocus_page: Page | None = None) -> Page:
+    """
+    新开标签打开个人中心，若旧标签就是个人中心则关闭它，课程页等其它标签不受影响。
+    """
+    old_page = page if page is not None and not page.is_closed() else None
 
     new_page = await context.new_page()
     await new_page.goto(PERSONAL_CENTER_URL, wait_until="domcontentloaded", timeout=15000)
+    if "personalCenter" not in (new_page.url or ""):
+        try:
+            await new_page.goto(PERSONAL_CENTER_URL, wait_until="domcontentloaded", timeout=15000)
+        except Exception:
+            pass
     if new_page.url.startswith(LOGIN_URL) or "sso/login" in (new_page.url or ""):
         _log("打开个人中心跳转到登录页，登录状态失效，发送邮件并退出")
         try:
@@ -447,6 +459,21 @@ async def _refresh_personal_center(context, page: Page) -> Page:
         except Exception as exc:
             _log(f"发送邮件失败：{exc}")
         raise SystemExit("登录失效，已发送提醒邮件")
+
+    # 仅当旧页本身就是个人中心时关闭它，避免误关播放页
+    if old_page and old_page is not new_page and "personalCenter" in (old_page.url or ""):
+        try:
+            await old_page.close()
+        except Exception:
+            pass
+
+    # 保证播放页在前台
+    if refocus_page:
+        try:
+            await refocus_page.bring_to_front()
+        except Exception:
+            pass
+
     return new_page
 
 
@@ -535,6 +562,14 @@ async def _play_and_set_2x(page: Page) -> None:
     _log("设置倍速：点击第一个 vjs-menu-item-text（期望 2x）")
     await _set_speed_2x(page)
 
+    _log("点击全屏按钮")
+    try:
+        fs_btn = page.locator('xpath=//*[@id="vjs_video_433"]/div[4]/button[2]').first
+        if await fs_btn.count():
+            await fs_btn.click(force=True, timeout=PW_TIMEOUT_MS)
+    except Exception as exc:
+        _log(f"点击全屏按钮失败：{exc}")
+
     _log("点击 vjs-tech：恢复播放（2x）")
     await _click_vjs_tech(page, "恢复播放（2x）")
     await _ensure_playing(page, "设置 2x 后恢复播放")
@@ -592,14 +627,14 @@ async def _watch_course(
     state_file: Path,
     refresh_interval: int,
     completed_hours_cache: float | None,
-) -> tuple[Page | None, str]:
+) -> tuple[Page | None, Page, str]:
     if await _has_media_load_error(page):
         _log("检测到媒体加载失败提示，跳过该课程")
         try:
             await page.close()
         except Exception:
             pass
-        return None, "skipped"
+        return None, personal_page, "skipped"
 
     _log("进入课程页，开始播放")
     await _play_and_set_2x(page)
@@ -620,7 +655,7 @@ async def _watch_course(
                 await page.close()
             except Exception:
                 pass
-            return None, "skipped"
+            return None, personal_page, "skipped"
 
         current_text = ""
         duration_text = ""
@@ -673,7 +708,7 @@ async def _watch_course(
                         await page.close()
                     except Exception:
                         pass
-                    return None, "completed"
+                    return None, personal_page, "completed"
             else:
                 small_start_count = 0
             post_refresh_check = False
@@ -681,15 +716,22 @@ async def _watch_course(
         if refresh_interval > 0 and time.monotonic() - periodic_refresh_ts >= refresh_interval:
             _log(f"每隔{refresh_interval}s刷新播放页面并重新播放")
             await _recover_course_page(page, url, "定时刷新")
+            # 同步刷新个人中心，保留新标签，关闭旧的个人中心标签
+            try:
+                personal_page = await _refresh_personal_center(context, personal_page, refocus_page=page)
+                await personal_page.wait_for_timeout(500)
+                try:
+                    await page.bring_to_front()
+                except Exception:
+                    pass
+                await _save_storage_state(context, state_file)
+                _log(f"已保存登录态：{state_file}")
+            except Exception as exc:
+                _log(f"定时刷新个人中心失败：{exc}")
             try:
                 await _play_and_set_2x(page)
             except Exception as exc:
                 _log(f"定时刷新后重播失败（err={exc}）")
-            try:
-                await _save_storage_state(context, state_file)
-                _log(f"已保存登录态：{state_file}")
-            except Exception as exc:
-                _log(f"保存登录态失败：{exc}")
             periodic_refresh_ts = time.monotonic()
             post_refresh_check = True
 
@@ -700,7 +742,7 @@ async def _watch_course(
                     await page.close()
                 except Exception:
                     pass
-                return None, "skipped"
+                return None, personal_page, "skipped"
 
             refresh_attempts += 1
             if missing_time_count >= 6:
@@ -745,7 +787,7 @@ async def _watch_course(
                     except Exception:
                         pass
                     print(f"【{_ts_full()} 第{course_no}个课程 {url} 已看完。】")
-                    return page, "completed"
+                    return page, personal_page, "completed"
         else:
             completion_candidate_ts = None
 
@@ -775,6 +817,10 @@ async def main(argv: list[str] | None = None) -> None:
         browser = await connect_chrome_over_cdp(p, endpoint)
 
         context = browser.contexts[0] if browser.contexts else await browser.new_context()
+        # 如有 storage_state.json，优先加载复用登录态
+        state_file_path = STATE_FILE if STATE_FILE.exists() else None
+        if state_file_path:
+            context = await browser.new_context(storage_state=str(state_file_path))
         context.set_default_timeout(PW_TIMEOUT_MS)
 
         existing = list(context.pages)
@@ -809,6 +855,17 @@ async def main(argv: list[str] | None = None) -> None:
         completed_hours_cache: float | None = initial_hours
 
         for course_no, (line_no, url) in enumerate(items, start=1):
+            # 开课前刷新个人中心并记录“开课前”学时
+            personal_page = await _refresh_personal_center(context, personal_page)
+            await personal_page.wait_for_timeout(1000)
+            pre_hours = await _read_watched_hours_value(personal_page)
+            done_pre, personal_page = await _print_progress(context, personal_page)
+            if done_pre:
+                await _close_other_pages(context, {personal_page})
+                return
+            if pre_hours is not None:
+                completed_hours_cache = pre_hours
+
             course_page = await context.new_page()
             _log(f"新标签打开课程：\n{url}")
             await course_page.goto(url, wait_until="domcontentloaded", timeout=15000)
@@ -827,7 +884,7 @@ async def main(argv: list[str] | None = None) -> None:
 
             prev_course_page = course_page
 
-            course_page, status = await _watch_course(
+            course_page, personal_page, status = await _watch_course(
                 context,
                 course_page,
                 url,
@@ -838,44 +895,30 @@ async def main(argv: list[str] | None = None) -> None:
                 completed_hours_cache,
             )
             prev_course_page = course_page
-            if status in {"completed", "skipped"}:
-                _remove_url_from_file(url_file, url)
-                if course_page is not None:
-                    try:
-                        await course_page.close()
-                    except Exception:
-                        pass
-                    prev_course_page = None
 
-            _log("课程结束：打开个人中心并显示当前已看课时")
-            personal_page = await _refresh_personal_center(context, personal_page)
-            await personal_page.wait_for_timeout(1000)
-            before_hours = await _read_watched_hours_value(personal_page)
-            done_before, personal_page = await _print_progress(context, personal_page)
-            if before_hours is not None:
-                _log(f"已完成学时(看完本课前)：{_format_hours_value(before_hours)}课时")
-                _append_watched_diff(url, before_hours, label="刷新前")
-
-            _log("刷新个人中心并显示最新已看课时")
-            personal_page = await _refresh_personal_center(context, personal_page)
-            await personal_page.wait_for_timeout(2000)
+            _log("课程结束：刷新个人中心并计算本课增量")
+            personal_page = await _refresh_personal_center(context, personal_page, refocus_page=course_page)
+            await personal_page.wait_for_timeout(1500)
             after_hours = await _read_watched_hours_value(personal_page)
             done_after, personal_page = await _print_progress(context, personal_page)
-            if after_hours is not None:
-                _log(f"已完成学时(看完本课后)：{_format_hours_value(after_hours)}课时")
-                _append_watched_diff(url, after_hours, label="刷新后")
-                completed_hours_cache = after_hours
-            elif before_hours is not None:
-                completed_hours_cache = before_hours
-
-            if before_hours is not None and after_hours is not None:
-                diff_hours = after_hours - before_hours
-                _log(f"看完本课給你增加了：{_format_hours_value(diff_hours)}课时")
+            diff_hours = None
+            if pre_hours is not None and after_hours is not None:
+                diff_hours = after_hours - pre_hours
+                _log(f"本课新增学时：{_format_hours_value(diff_hours)}课时")
                 _append_watched_diff(url, diff_hours, label="差值")
-            else:
-                _log("已看课时差值计算失败：无法读取刷新前后课时")
+                completed_hours_cache = after_hours
+            if diff_hours is not None and diff_hours != 0:
+                _remove_url_from_file(url_file, url)
+                status = "completed"
 
-            if done_after or done_before:
+            if status in {"completed", "skipped"} and course_page is not None:
+                try:
+                    await course_page.close()
+                except Exception:
+                    pass
+                prev_course_page = None
+
+            if done_after:
                 return
 
             if prev_course_page is not None:

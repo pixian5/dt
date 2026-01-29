@@ -695,9 +695,8 @@ async def ensure_logged_in(page: Page, username: str, password: str, open_only: 
         await page.fill("#username", username)
     if password:
         await page.fill("#password", password)
-    max_login_attempts = 20
     login_attempts = 0
-    while login_attempts < max_login_attempts:
+    while True:
         if _is_logged_in_by_url(page):
             print(f"[INFO] 检测到跳转 member（{page.url}），登录成功")
             return
@@ -719,7 +718,8 @@ async def ensure_logged_in(page: Page, username: str, password: str, open_only: 
                 pass
             await page.wait_for_timeout(800)
             continue
-        _safe_print(f"[INFO] 识别验证码是{code}，尝试登录")
+        login_attempts += 1
+        _safe_print(f"[INFO] 识别验证码是{code}，第{login_attempts}次尝试登录")
         await page.fill("#validateCode", code)
         await _submit_login_form(page)
         await page.wait_for_timeout(1500)

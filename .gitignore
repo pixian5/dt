@@ -69,9 +69,8 @@ data/output.csv
 data/login_result.png
 
 # Secrets
-secrets.local.env
-storage_state.json
-url.txt
+# secrets.local.env
+# storage_state.json
 
 # IDE
 .DS_Store
