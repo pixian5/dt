@@ -1,16 +1,17 @@
 import argparse
 import asyncio
 import os
-import time
-from datetime import datetime
-from pathlib import Path
 import re
 import smtplib
+import time
+from datetime import datetime
 from email.mime.text import MIMEText
+from pathlib import Path
+
 from playwright.async_api import async_playwright, Page
 
 # 默认播放页定时刷新间隔（秒）
-DEFAULT_REFRESH_INTERVAL = 300
+DEFAULT_REFRESH_INTERVAL = 30
 
 from login import (
     LOGIN_URL,
@@ -52,6 +53,8 @@ def _ts_full() -> str:
 
 def _log(msg: str) -> None:
     print(f"{_ts()} {msg}")
+
+
 
 
 def _pick_url_file() -> Path:
@@ -332,7 +335,7 @@ def _append_watched_diff(url: str, diff_hours: float, label: str = "差值") -> 
         p.parent.mkdir(parents=True, exist_ok=True)
     except Exception:
         pass
-    text = f"{_ts_full()}\\n{url}\\n{label}:{_format_hours_value(diff_hours)}课时\\n\\n"
+    text = f"{_ts_full()}\n{url}\n{label}:{_format_hours_value(diff_hours)}课时\n\n"
     try:
         with p.open("a", encoding="utf-8") as f:
             f.write(text)
@@ -340,14 +343,14 @@ def _append_watched_diff(url: str, diff_hours: float, label: str = "差值") -> 
         _log(f"写入已看文件失败：{exc}")
 
 
-async def _print_personal_center_status(page: Page) -> bool:
+async def _print_personal_center_status(context, page: Page) -> tuple[bool, Page]:
     for attempt in range(3):
         progress_text = await _read_progress_text(page)
         if progress_text:
             _log(f"个人中心进度：{progress_text}")
         else:
             _log(f"个人中心进度读取失败（url={page.url!r}）")
-            return False
+            return False, page
 
         watched_hours = await _read_watched_hours_text(page)
         value = _parse_hours_from_text(watched_hours)
@@ -361,18 +364,18 @@ async def _print_personal_center_status(page: Page) -> bool:
 
         if "100%" in progress_text:
             print(f"【{_ts_full()}-已看完100%】")
-            return True
+            return True, page
 
         if progress_text.strip() not in {"0", "0%"}:
-            return False
+            return False, page
 
         if attempt < 2:
             _log("进度为 0/0%，刷新后等待2s重新检查")
-            await _refresh_personal_center(page)
+            page = await _refresh_personal_center(context, page)
             await page.wait_for_timeout(2000)
 
     _log("个人中心进度多次刷新仍为 0%，放弃继续刷新，你可能真没学")
-    return False
+    return False, page
 
 
 def _remove_url_from_file(url_file: Path, url: str) -> None:
@@ -405,8 +408,8 @@ def _remove_url_from_file(url_file: Path, url: str) -> None:
     _log(f"已从 URL 文件删除：{url}")
 
 
-async def _print_progress(page: Page) -> bool:
-    return await _print_personal_center_status(page)
+async def _print_progress(context, page: Page) -> tuple[bool, Page]:
+    return await _print_personal_center_status(context, page)
 
 
 async def _goto_personal_center_in_current_tab(page: Page) -> None:
@@ -425,11 +428,26 @@ async def _goto_personal_center_in_current_tab(page: Page) -> None:
         await page.wait_for_timeout(500)
 
 
-async def _refresh_personal_center(page: Page) -> None:
+async def _refresh_personal_center(context, page: Page) -> Page:
+    # Close the current personal center tab and open a new one to avoid cached state.
     try:
-        await page.reload(wait_until="domcontentloaded", timeout=15000)
+        await page.close()
     except Exception:
-        await page.goto(PERSONAL_CENTER_URL, wait_until="domcontentloaded", timeout=15000)
+        pass
+
+    new_page = await context.new_page()
+    await new_page.goto(PERSONAL_CENTER_URL, wait_until="domcontentloaded", timeout=15000)
+    if new_page.url.startswith(LOGIN_URL) or "sso/login" in (new_page.url or ""):
+        _log("打开个人中心跳转到登录页，登录状态失效，发送邮件并退出")
+        try:
+            send_email(
+                "登录失效提醒",
+                f"打开个人中心跳转到登录页，登录已失效。\n当前URL={new_page.url}",
+            )
+        except Exception as exc:
+            _log(f"发送邮件失败：{exc}")
+        raise SystemExit("登录失效，已发送提醒邮件")
+    return new_page
 
 
 async def _wait_player_ready(page: Page) -> None:
@@ -770,10 +788,11 @@ async def main(argv: list[str] | None = None) -> None:
 
         await _close_other_pages(context, {personal_page})
 
-        await _goto_personal_center_in_current_tab(personal_page)
+        personal_page = await _refresh_personal_center(context, personal_page)
         await personal_page.wait_for_timeout(1000)
         initial_hours = await _read_watched_hours_value(personal_page)
-        if await _print_progress(personal_page):
+        done_initial, personal_page = await _print_progress(context, personal_page)
+        if done_initial:
             await _close_other_pages(context, {personal_page})
             return
 
@@ -829,23 +848,19 @@ async def main(argv: list[str] | None = None) -> None:
                     prev_course_page = None
 
             _log("课程结束：打开个人中心并显示当前已看课时")
-            try:
-                await personal_page.bring_to_front()
-            except Exception:
-                pass
-            await _goto_personal_center_in_current_tab(personal_page)
+            personal_page = await _refresh_personal_center(context, personal_page)
             await personal_page.wait_for_timeout(1000)
             before_hours = await _read_watched_hours_value(personal_page)
-            done_before = await _print_progress(personal_page)
+            done_before, personal_page = await _print_progress(context, personal_page)
             if before_hours is not None:
                 _log(f"已完成学时(看完本课前)：{_format_hours_value(before_hours)}课时")
                 _append_watched_diff(url, before_hours, label="刷新前")
 
             _log("刷新个人中心并显示最新已看课时")
-            await _refresh_personal_center(personal_page)
+            personal_page = await _refresh_personal_center(context, personal_page)
             await personal_page.wait_for_timeout(2000)
             after_hours = await _read_watched_hours_value(personal_page)
-            done_after = await _print_progress(personal_page)
+            done_after, personal_page = await _print_progress(context, personal_page)
             if after_hours is not None:
                 _log(f"已完成学时(看完本课后)：{_format_hours_value(after_hours)}课时")
                 _append_watched_diff(url, after_hours, label="刷新后")

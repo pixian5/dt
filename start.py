@@ -67,3 +67,8 @@ def main(argv: list[str]) -> None:
 
 if __name__ == "__main__":
     main(sys.argv[1:])
+
+# 测试成功版本
+# paddlepaddle 3.2.2
+# paddleocr 3.2.0
+# paddlex 3.2.1
