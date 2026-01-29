@@ -1,6 +1,6 @@
 paddlepaddle==3.2.2
-paddleocr==3.4.0
-paddlex==3.4.0
+paddleocr
+paddlex
 playwright
 pillow
 numpy==2.4.1
