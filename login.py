@@ -740,6 +740,10 @@ async def ensure_logged_in(page: Page, username: str, password: str, open_only: 
                 pass
             await page.wait_for_timeout(800)
             continue
+        # If login failed without captcha error, check if we've hit max attempts
+        if login_attempts >= max_login_attempts:
+            _safe_print(f"[WARN] 已达到最大登录尝试次数（{max_login_attempts}），退出OCR登录")
+            break
     print("[WARN] OCR 登录失败 5 次，转人工输入")
     if not sys.stdin.isatty() or os.getenv("DT_ALLOW_MANUAL", "1") != "1":
         print("[WARN] 当前为非交互模式或已禁用人工输入，跳过人工输入")
