@@ -696,6 +696,7 @@ async def ensure_logged_in(page: Page, username: str, password: str, open_only: 
     if password:
         await page.fill("#password", password)
     login_attempts = 0
+    max_login_attempts = 5
     while True:
         if _is_logged_in_by_url(page):
             print(f"[INFO] 检测到跳转 member（{page.url}），登录成功")
@@ -728,17 +729,29 @@ async def ensure_logged_in(page: Page, username: str, password: str, open_only: 
             print(f"[INFO] 登录成功：{page.url}")
             return
         if await _has_captcha_error(page):
-            login_attempts += 1
             safe_code = re.sub(r"[^A-Z0-9]", "?", str(code))
             _safe_print(f"[WARN] 验证码错误，点击验证码图片刷新后重试（{login_attempts}/{max_login_attempts}）：{safe_code!r}")
             _mark_captcha_image(img_path, "验证码错误", safe_code)
+            if login_attempts >= max_login_attempts:
+                break
             try:
                 await page.locator("#yanzhengma").click()
             except Exception:
                 pass
             await page.wait_for_timeout(800)
             continue
-    print("[WARN] OCR 登录失败 5 次，转人工输入")
+        # If login failed without captcha error, check if we've hit max attempts
+        if login_attempts >= max_login_attempts:
+            _safe_print(f"[WARN] 已达到最大登录尝试次数（{max_login_attempts}），退出OCR登录")
+            break
+        # Continue trying with a new captcha
+        try:
+            await page.locator("#yanzhengma").click()
+        except Exception:
+            pass
+        await page.wait_for_timeout(800)
+        continue
+    print(f"[WARN] OCR 登录失败 {max_login_attempts} 次，转人工输入")
     if not sys.stdin.isatty() or os.getenv("DT_ALLOW_MANUAL", "1") != "1":
         print("[WARN] 当前为非交互模式或已禁用人工输入，跳过人工输入")
         return
