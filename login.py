@@ -695,7 +695,8 @@ async def ensure_logged_in(page: Page, username: str, password: str, open_only: 
         await page.fill("#username", username)
     if password:
         await page.fill("#password", password)
-    login_attempts = 0
+
+    login_attempts = 0  # 统计登录失败次数（仅提交后失败才计数）
     while True:
         if _is_logged_in_by_url(page):
             print(f"[INFO] 检测到跳转 member（{page.url}），登录成功")
@@ -718,8 +719,8 @@ async def ensure_logged_in(page: Page, username: str, password: str, open_only: 
                 pass
             await page.wait_for_timeout(800)
             continue
-        login_attempts += 1
-        _safe_print(f"[INFO] 识别验证码是{code}，第{login_attempts}次尝试登录")
+        attempt_no = login_attempts + 1
+        _safe_print(f"[INFO] 识别验证码是{code}，第{attempt_no}次尝试登录")
         await page.fill("#validateCode", code)
         await _submit_login_form(page)
         await page.wait_for_timeout(1500)
@@ -727,10 +728,10 @@ async def ensure_logged_in(page: Page, username: str, password: str, open_only: 
             _mark_captcha_image(img_path, "成功", code)
             print(f"[INFO] 登录成功：{page.url}")
             return
+        login_attempts += 1  # 仅在提交后未登录成功时累加失败次数
         if await _has_captcha_error(page):
-            login_attempts += 1
             safe_code = re.sub(r"[^A-Z0-9]", "?", str(code))
-            _safe_print(f"[WARN] 验证码错误，点击验证码图片刷新后重试（{login_attempts}/{max_login_attempts}）：{safe_code!r}")
+            _safe_print(f"[WARN] 验证码错误，点击验证码图片刷新后重试（第{login_attempts}次）：{safe_code!r}")
             _mark_captcha_image(img_path, "验证码错误", safe_code)
             try:
                 await page.locator("#yanzhengma").click()
@@ -738,32 +739,7 @@ async def ensure_logged_in(page: Page, username: str, password: str, open_only: 
                 pass
             await page.wait_for_timeout(800)
             continue
-    print("[WARN] OCR 登录失败 5 次，转人工输入")
-    if not sys.stdin.isatty() or os.getenv("DT_ALLOW_MANUAL", "1") != "1":
-        print("[WARN] 当前为非交互模式或已禁用人工输入，跳过人工输入")
-        return
-    for attempt in range(1, 4):
-        captcha = (await asyncio.to_thread(input, "请手动输入验证码：")).strip()
-        if not captcha:
-            print("[WARN] 验证码为空，重新输入")
-            continue
-        await page.fill("#validateCode", captcha)
-        await _submit_login_form(page)
-        await page.wait_for_timeout(1500)
-        if _is_logged_in_by_url(page):
-            print(f"[INFO] 登录成功：{page.url}")
-            return
-        if await _has_captcha_error(page):
-            print(f"[WARN] 验证码错误，重试（{attempt}/3）")
-            try:
-                await page.locator("#yanzhengma").click()
-            except Exception:
-                pass
-            await page.wait_for_timeout(800)
-            continue
-    print("[WARN] 验证码多次错误，持续检测是否已登录")
-    await _wait_for_login(page, interval_seconds=1)
-    return
+
 async def perform_login(
     username: str,
     password: str,

@@ -438,7 +438,7 @@ async def _goto_personal_center_in_current_tab(page: Page) -> None:
 
 async def _refresh_personal_center(context, page: Page | None, refocus_page: Page | None = None) -> Page:
     """
-    新开标签打开个人中心，若旧标签就是个人中心则关闭它，课程页等其它标签不受影响。
+    新开标签打开个人中心；只关闭旧的“个人中心”标签，避免误关播放页/其它页面。
     """
     old_page = page if page is not None and not page.is_closed() else None
 
@@ -716,7 +716,7 @@ async def _watch_course(
         if refresh_interval > 0 and time.monotonic() - periodic_refresh_ts >= refresh_interval:
             _log(f"每隔{refresh_interval}s刷新播放页面并重新播放")
             await _recover_course_page(page, url, "定时刷新")
-            # 同步刷新个人中心，保留新标签，关闭旧的个人中心标签
+            # 同步刷新个人中心：新开个人中心标签，若旧标签也是个人中心则关闭，播放页保持前台
             try:
                 personal_page = await _refresh_personal_center(context, personal_page, refocus_page=page)
                 await personal_page.wait_for_timeout(500)
