@@ -439,6 +439,7 @@ async def _goto_personal_center_in_current_tab(page: Page) -> None:
 async def _refresh_personal_center(context, page: Page | None, refocus_page: Page | None = None) -> Page:
     """
     新开标签打开个人中心；只关闭旧的“个人中心”标签，避免误关播放页/其它页面。
+    如检测到登录失效，将尝试自动重新登录后再进入个人中心。
     """
     old_page = page if page is not None and not page.is_closed() else None
 
@@ -450,15 +451,24 @@ async def _refresh_personal_center(context, page: Page | None, refocus_page: Pag
         except Exception:
             pass
     if new_page.url.startswith(LOGIN_URL) or "sso/login" in (new_page.url or ""):
-        _log("打开个人中心跳转到登录页，登录状态失效，发送邮件并退出")
+        _log("打开个人中心跳转到登录页，检测到登录失效，自动尝试重新登录")
+        username = os.getenv("DT_CRAWLER_USERNAME", "")
+        password = os.getenv("DT_CRAWLER_PASSWORD", "")
         try:
-            send_email(
-                "登录失效提醒",
-                f"打开个人中心跳转到登录页，登录已失效。\n当前URL={new_page.url}",
-            )
+            await ensure_logged_in(new_page, username=username, password=password, open_only=False, skip_login=False)
+            await new_page.goto(PERSONAL_CENTER_URL, wait_until="domcontentloaded", timeout=15000)
         except Exception as exc:
-            _log(f"发送邮件失败：{exc}")
-        raise SystemExit("登录失效，已发送提醒邮件")
+            _log(f"自动重新登录失败：{exc}")
+        # 重新登录后仍未进入个人中心则终止
+        if new_page.url.startswith(LOGIN_URL) or "sso/login" in (new_page.url or ""):
+            try:
+                send_email(
+                    "登录失效提醒",
+                    f"打开个人中心跳转到登录页，自动登录失败。\n当前URL={new_page.url}",
+                )
+            except Exception as exc:
+                _log(f"发送邮件失败：{exc}")
+            raise SystemExit("登录失效，自动登录失败，已发送提醒邮件")
 
     # 仅当旧页本身就是个人中心时关闭它，避免误关播放页
     if old_page and old_page is not new_page and "personalCenter" in (old_page.url or ""):
@@ -708,7 +718,7 @@ async def _watch_course(
                         await page.close()
                     except Exception:
                         pass
-                    return None, personal_page, "completed"
+                    return None, personal_page, "skipped_force"
             else:
                 small_start_count = 0
             post_refresh_check = False
@@ -816,23 +826,32 @@ async def main(argv: list[str] | None = None) -> None:
         endpoint = os.getenv("PLAYWRIGHT_CDP_ENDPOINT", "http://127.0.0.1:53333")
         browser = await connect_chrome_over_cdp(p, endpoint)
 
-        context = browser.contexts[0] if browser.contexts else await browser.new_context()
-        # 如有 storage_state.json，优先加载复用登录态
-        state_file_path = STATE_FILE if STATE_FILE.exists() else None
-        if state_file_path:
-            context = await browser.new_context(storage_state=str(state_file_path))
+        # 优先复用已有 context；若没有则新建，并禁用默认 viewport 以便窗口大小可自由调整
+        state_file_path = Path(os.getenv("DT_STORAGE_STATE_FILE", STATE_FILE)).resolve()
+        state_exists = state_file_path.exists()
+        # 始终新建专用 context 并加载 storage_state（若存在）
+        context = await browser.new_context(
+            storage_state=str(state_file_path) if state_exists else None,
+            viewport=None,  # 跟随窗口尺寸，避免内容区域被固定
+        )
+        using_existing_context = False
         context.set_default_timeout(PW_TIMEOUT_MS)
 
-        existing = list(context.pages)
-        personal_page = existing[-1] if existing else await context.new_page()
-        try:
-            await personal_page.bring_to_front()
-        except Exception:
-            pass
+        # 新建个人中心页；关闭其它空白页
+        personal_page = await context.new_page()
+        for p in list(context.pages):
+            if p is personal_page:
+                continue
+            if (p.url or "") in {"", "about:blank"}:
+                try:
+                    await p.close()
+                except Exception:
+                    pass
 
         await ensure_logged_in(personal_page, username=username, password=password, open_only=False, skip_login=False)
 
-        await _close_other_pages(context, {personal_page})
+        if not using_existing_context:
+            await _close_other_pages(context, {personal_page})
 
         personal_page = await _refresh_personal_center(context, personal_page)
         await personal_page.wait_for_timeout(1000)
@@ -910,8 +929,10 @@ async def main(argv: list[str] | None = None) -> None:
             if diff_hours is not None and diff_hours != 0:
                 _remove_url_from_file(url_file, url)
                 status = "completed"
+            elif status == "skipped_force":
+                _remove_url_from_file(url_file, url)
 
-            if status in {"completed", "skipped"} and course_page is not None:
+            if status in {"completed", "skipped", "skipped_force"} and course_page is not None:
                 try:
                     await course_page.close()
                 except Exception:
@@ -921,10 +942,11 @@ async def main(argv: list[str] | None = None) -> None:
             if done_after:
                 return
 
-            if prev_course_page is not None:
-                await _close_other_pages(context, {personal_page, prev_course_page})
-            else:
-                await _close_other_pages(context, {personal_page})
+            if not using_existing_context:
+                if prev_course_page is not None:
+                    await _close_other_pages(context, {personal_page, prev_course_page})
+                else:
+                    await _close_other_pages(context, {personal_page})
 
 
 if __name__ == "__main__":

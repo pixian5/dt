@@ -101,7 +101,7 @@ async def connect_chrome_over_cdp(p, endpoint: str):
                 except Exception:
                     continue
         raise SystemExit(
-            f"无法连接到本地 Chrome CDP 端点：{endpoint}\n"
+            f"无法连接到 Chrome CDP 端点：{endpoint}\n"
             f"{_platform_launch_hint()}\n"
             "可设置 PLAYWRIGHT_CDP_ENDPOINT 进行覆盖。"
         ) from exc
@@ -675,6 +675,11 @@ async def _submit_login_form(page: Page) -> bool:
 async def ensure_logged_in(page: Page, username: str, password: str, open_only: bool, skip_login: bool = False) -> None:
     if skip_login:
         return
+    # 自动加载本地凭据（仅在未提供时）
+    if (not username or not password):
+        load_local_secrets()
+        username = username or os.getenv("DT_CRAWLER_USERNAME", "")
+        password = password or os.getenv("DT_CRAWLER_PASSWORD", "")
     print(f"[INFO] 打开登录页：{LOGIN_URL}")
     await call_with_timeout_retry(page.goto, "打开登录页", LOGIN_URL, wait_until="load", timeout=PW_TIMEOUT_MS)
     await page.wait_for_timeout(1000)
