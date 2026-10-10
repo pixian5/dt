@@ -76,3 +76,6 @@ data/login_result.png
 .DS_Store
 .idea/
 .vscode/
+
+# WorkBuddy 工作目录（项目记忆等，不入库）
+.workbuddy/
